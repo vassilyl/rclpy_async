@@ -1,5 +1,5 @@
 from __future__ import annotations
-from contextlib import asynccontextmanager
+from contextlib import contextmanager, asynccontextmanager
 from enum import Enum
 import logging
 import threading
@@ -136,7 +136,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         qos_profile: QoSProfile | int,
     ):
         """
-        Create an async context manager to subscribe to a ROS topic.
+        Create a context manager to subscribe to a ROS topic.
 
         While in the context, each message registers a task in the AnyIO event loop
         to call the async_callback. Exiting the context destroys the subscription
@@ -172,8 +172,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 )
 
         # returns an async context manager that destroys subscription on exit
-        @asynccontextmanager
-        async def _create_subscription():
+        @contextmanager
+        def _create_subscription():
             if self.node is None:
                 raise RuntimeError("ROS node is not initialized.")
             subscription = self.node.create_subscription(

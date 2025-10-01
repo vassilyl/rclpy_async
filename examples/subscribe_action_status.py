@@ -106,7 +106,7 @@ async def main():
 
                 async with send_stream, receive_stream:
                     topic = "/turtle1/rotate_absolute/_action/status"
-                    async with anode.create_subscription(
+                    with anode.create_subscription(
                         GoalStatusArray,
                         topic,
                         # do not skip messages, block the subscription callback thread
