@@ -135,23 +135,30 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         async_callback: Callable[[object], Awaitable[None]] | Callable[[object], None],
         qos_profile: QoSProfile | int,
     ):
-        """Create an async context manager for a ROS subscription.
+        """
+        Create an async context manager to subscribe to a ROS topic.
 
-        For example, to consume a topic as a stream of messages:
+        While in the context, each message registers a task in the AnyIO event loop
+        to call the async_callback. Exiting the context destroys the subscription
+        and stops processing of incoming messages.
 
-            send_stream, receive_stream = anyio.create_memory_object_stream(1)
-            async with anode.create_subscription(
-                msg_type, topic_name, send_stream.send_nowait, qos_profile=1
-            ):
-                msg = await receive_stream.receive()
-                print(msg)
-                ...
 
-        Args:
-            msg_type: The ROS message type class (e.g., std_msgs.msg.String)
-            topic_name: The name of the ROS topic to subscribe to (e.g., "/chat")
-            async_callback: An async function to call on the blocking portal event loop with each incoming message
-            qos_profile: The QoS profile to use (e.g., 1 for default reliability)
+        Parameters
+        ----------
+        msg_type : type
+            The ROS message type class (e.g., std_msgs.msg.String).
+        topic_name : str
+            The name of the ROS topic to subscribe to (e.g., "/chat").
+        async_callback : Callable[[object], Awaitable[None]] or Callable[[object], None]
+            An async function to call the with each incoming message.
+        qos_profile : QoSProfile or int
+            The QoS profile to use (e.g., 1 for default reliability).
+
+        
+        Returns
+        -------
+        AsyncContextManager
+            An async context manager that destroys the subscription on exit.
         """
 
         def _cb(msg):
