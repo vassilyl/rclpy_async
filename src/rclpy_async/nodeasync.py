@@ -219,6 +219,22 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
     ):
+        """Create a service client for a ROS service.
+
+        Parameters
+        ----------
+        srv_type : type
+            The ROS service type class (e.g., std_srvs.srv.SetBool).
+        srv_name : str
+            The name of the ROS service to call (e.g., "/toggle").
+        qos_profile : QoSProfile, optional
+            The QoS profile to use for the service client, by default qos_profile_services_default.
+        
+        Returns
+        -------
+        Callable[[object], Awaitable[object]]
+            An async function that takes a service request message and returns the response message.
+        """
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
         rlcpy_client = self.node.create_client(

@@ -35,9 +35,9 @@ def clear_receive_buffer(
 async def main_async():
     async with anyio.from_thread.BlockingPortal() as portal:
         async with NodeAsync(portal, "anyio_turtlesim") as app:
-            send_stream, receive_stream = anyio.create_memory_object_stream(1)
+            send_stream, receive_stream = anyio.create_memory_object_stream()
 
-            async with app.create_subscription(
+            with app.create_subscription(
                 Pose, "/turtle1/pose", send_stream.send_nowait, qos_profile=1
             ):
                 for _ in range(2):
