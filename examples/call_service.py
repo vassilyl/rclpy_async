@@ -8,6 +8,7 @@ Run:
     python examples/call_service.py
     Requires that `turtlesim` is running, e.g.:
     ros2 run turtlesim turtlesim_node"""
+
 import anyio
 import anyio.from_thread
 import rclpy_async
@@ -20,6 +21,7 @@ def create_teleport_request(linear: float, angular: float) -> TeleportRelative.R
     req.linear = linear
     req.angular = angular
     return req
+
 
 async def main():
     async with anyio.from_thread.BlockingPortal() as portal:
@@ -35,12 +37,14 @@ async def main():
                 # wait for the next message to arrive
                 before = await receive_stream.receive()
                 print(f"Pose before: {before}")
-                teleport_relative = anode.create_service_client(
-                    TeleportRelative, "/turtle1/teleport_relative"
-                )
                 linear, angular = 2.0, 1.57
-                print(f"Teleport relative request: linear={linear}, angular={angular}")
-                resp = await teleport_relative(create_teleport_request(linear, angular))
+                print(f"Teleport relative linear={linear}, angular={angular}")
+                async with anode.service_client(
+                    TeleportRelative, "/turtle1/teleport_relative"
+                ) as teleport_relative:
+                    resp = await teleport_relative(
+                        create_teleport_request(linear, angular)
+                    )
                 print(f"Response: {resp}")
                 after = await receive_stream.receive()
                 print(f"Pose after: {after}")

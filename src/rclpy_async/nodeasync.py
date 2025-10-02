@@ -154,7 +154,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         qos_profile : QoSProfile or int
             The QoS profile to use (e.g., 1 for default reliability).
 
-        
+
         Returns
         -------
         AsyncContextManager
@@ -212,14 +212,18 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             raise exc
         return fut.result()
 
-    def create_service_client(
+    def service_client(
         self,
         srv_type,
         srv_name: str,
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
+        server_wait_timeout: float = 5.0,
     ):
-        """Create a service client for a ROS service.
+        """Create an async context manager for a ROS service client.
+
+        The context manager yields an async function that takes a service request
+        message, calls the ROS service and returns the response message.
 
         Parameters
         ----------
@@ -229,26 +233,45 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             The name of the ROS service to call (e.g., "/toggle").
         qos_profile : QoSProfile, optional
             The QoS profile to use for the service client, by default qos_profile_services_default.
-        
+
         Returns
         -------
-        Callable[[object], Awaitable[object]]
-            An async function that takes a service request message and returns the response message.
+        AsyncContextManager
+            An async context manager that yields a function to call the service.
         """
-        if self.node is None:
-            raise RuntimeError("ROS node is not initialized.")
-        rlcpy_client = self.node.create_client(
-            srv_type,
-            srv_name,
-            callback_group=self._reentrant_cbg,
-            qos_profile=qos_profile,
-        )
 
-        async def _call(request):
-            fut = rlcpy_client.call_async(request)
-            return await self.await_rclpy_future(fut)
+        @asynccontextmanager
+        async def _create_service_client():
+            if self.node is None:
+                raise RuntimeError("ROS node is not initialized.")
+            rlcpy_client = self.node.create_client(
+                srv_type,
+                srv_name,
+                callback_group=self._reentrant_cbg,
+                qos_profile=qos_profile,
+            )
 
-        return _call
+            try:
+            # Wait for server
+                server_ready = rlcpy_client.service_is_ready()
+                if not server_ready:
+                    with anyio.move_on_after(server_wait_timeout):
+                        while not server_ready:
+                            await anyio.sleep(0.1)
+                            server_ready = rlcpy_client.service_is_ready()
+                if not server_ready:
+                    raise TimeoutError(
+                        f"Action server '{srv_name}' not available within {server_wait_timeout}s"
+                    )
+                async def _call(request):
+                    fut = rlcpy_client.call_async(request)
+                    return await self.await_rclpy_future(fut)
+
+                yield _call
+            finally:
+                self.node.destroy_client(rlcpy_client)
+
+        return _create_service_client()
 
     async def call_action(
         self,
@@ -256,7 +279,9 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         action_name: str,
         goal_msg,
         *,
-        feedback_handler_async: Callable[[object], None] | Callable[[object], Awaitable[None]] | None = None,
+        feedback_handler_async: Callable[[object], None]
+        | Callable[[object], Awaitable[None]]
+        | None = None,
         await_result_scope: Optional[anyio.CancelScope] = None,
         server_wait_timeout: float = 5.0,
     ) -> tuple[int, object]:
@@ -289,7 +314,9 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             # Send goal and await goal handle
             goal_handle = None
             # Do not allow cancellation until we receive the goal handle
-            with anyio.move_on_after(server_wait_timeout, shield=True) as send_goal_scope:
+            with anyio.move_on_after(
+                server_wait_timeout, shield=True
+            ) as send_goal_scope:
                 goal_future = action_client.send_goal_async(
                     goal_msg,
                     feedback_callback=lambda feedback_msg: self._portal.start_task_soon(
@@ -311,7 +338,11 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             result_future = goal_handle.get_result_async()
 
             logger.debug("Awaiting the goal result...")
-            with anyio.CancelScope() if await_result_scope is None else await_result_scope:
+            with (
+                anyio.CancelScope()
+                if await_result_scope is None
+                else await_result_scope
+            ):
                 try:
                     result = await self.await_rclpy_future(result_future)
                     if result is None:

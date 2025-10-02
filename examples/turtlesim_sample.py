@@ -46,15 +46,14 @@ async def main_async():
                         f"[pose] x={pose.x:.3f} y={pose.y:.3f} theta={pose.theta:.3f} "
                         f"linear_velocity={pose.linear_velocity:.3f} angular_velocity={pose.angular_velocity:.3f}"
                     )
-
-                teleport_relative = anode.create_service_client(
+                async with anode.service_client(
                     TeleportRelative, "/turtle1/teleport_relative"
-                )
-                req = TeleportRelative.Request()
-                req.linear = 2.0
-                req.angular = 1.57
-                resp = await teleport_relative(req)
-                logger.info(f"TeleportRelative response: {resp}")
+                ) as teleport_relative:
+                    req = TeleportRelative.Request()
+                    req.linear = 2.0
+                    req.angular = 1.57
+                    resp = await teleport_relative(req)
+                    logger.info(f"TeleportRelative response: {resp}")
                 clear_receive_buffer(receive_stream)
                 pose = await receive_stream.receive()
                 logger.info(
