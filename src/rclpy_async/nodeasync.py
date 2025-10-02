@@ -280,6 +280,28 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         | None = None,
         server_wait_timeout: float = 5.0,
     ):
+        """Create an async context manager for a ROS action client.
+        
+        The context manager yields an async function that takes a goal message,
+        sends the goal to the action server, and returns a tuple of (status, result message).
+        The function also translates cancel scope cancellation to action goal cancellation.
+        
+        Parameters
+        ----------
+        action_type : type
+            The ROS action type class (e.g., example_interfaces.action.Fibonacci).
+        action_name : str
+            The name of the ROS action to call (e.g., "/fibonacci").
+        feedback_handler_async : Callable[[object], None] or Callable[[object], Awaitable[None]], optional
+            An async function to handle feedback messages, by default None.
+        server_wait_timeout : float, optional
+            Time in seconds to wait for the action server to be available, by default 5 seconds.
+        
+        Returns
+        -------
+        AsyncContextManager
+            An async context manager that yields a function to send goals to the action server.
+        """
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
         action_client = ActionClient(
@@ -298,7 +320,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     f"Action server '{action_name}' not available within {server_wait_timeout}s"
                 )
 
-            async def _call(goal_msg):
+            async def _call(goal_msg: object) -> tuple[int, object]:
                 # Send goal and await goal handle
                 goal_handle = None
                 # Do not allow cancellation until we receive the goal handle
@@ -336,7 +358,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     # result has .status and .result fields
                     return (result.status, result.result)
                 except anyio.get_cancelled_exc_class():
-                    # The result_scope was cancelled.
+                    # The scope was cancelled.
                     # Request cancellation even if outer scope was cancelled
                     with anyio.move_on_after(server_wait_timeout, shield=True):
                         logger.debug("Cancelling goal...")
