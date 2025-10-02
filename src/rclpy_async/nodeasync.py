@@ -128,6 +128,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 self._context = None
                 logger.debug(f"ROS node '{self._node_name}' shutdown complete")
 
+    @contextmanager
     def subscription(
         self,
         msg_type,
@@ -160,6 +161,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         AsyncContextManager
             An async context manager that destroys the subscription on exit.
         """
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
 
         def _cb(msg):
             try:
@@ -171,24 +174,17 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     exc_info=True,
                 )
 
-        # returns an async context manager that destroys subscription on exit
-        @contextmanager
-        def _create_subscription():
-            if self.node is None:
-                raise RuntimeError("ROS node is not initialized.")
-            subscription = self.node.create_subscription(
-                msg_type,
-                topic_name,
-                _cb,
-                qos_profile,
-                callback_group=self._reentrant_cbg,
-            )
-            try:
-                yield subscription
-            finally:
-                subscription.destroy()
-
-        return _create_subscription()
+        subscription = self.node.create_subscription(
+            msg_type,
+            topic_name,
+            _cb,
+            qos_profile,
+            callback_group=self._reentrant_cbg,
+        )
+        try:
+            yield subscription
+        finally:
+            subscription.destroy()
 
     async def await_rclpy_future(self, fut: RclpyFuture, **kwargs):
         evt = anyio.Event()
@@ -212,7 +208,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             raise exc
         return fut.result()
 
-    def service_client(
+    @asynccontextmanager
+    async def service_client(
         self,
         srv_type,
         srv_name: str,
@@ -233,6 +230,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             The name of the ROS service to call (e.g., "/toggle").
         qos_profile : QoSProfile, optional
             The QoS profile to use for the service client, by default qos_profile_services_default.
+        server_wait_timeout : float, optional
+            Time in seconds to wait for the service server to be available, by default 5 seconds.
 
         Returns
         -------
@@ -240,38 +239,35 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             An async context manager that yields a function to call the service.
         """
 
-        @asynccontextmanager
-        async def _create_service_client():
-            if self.node is None:
-                raise RuntimeError("ROS node is not initialized.")
-            rlcpy_client = self.node.create_client(
-                srv_type,
-                srv_name,
-                callback_group=self._reentrant_cbg,
-                qos_profile=qos_profile,
-            )
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
+        rlcpy_client = self.node.create_client(
+            srv_type,
+            srv_name,
+            callback_group=self._reentrant_cbg,
+            qos_profile=qos_profile,
+        )
 
-            try:
+        try:
             # Wait for server
-                server_ready = rlcpy_client.service_is_ready()
-                if not server_ready:
-                    with anyio.move_on_after(server_wait_timeout):
-                        while not server_ready:
-                            await anyio.sleep(0.1)
-                            server_ready = rlcpy_client.service_is_ready()
-                if not server_ready:
-                    raise TimeoutError(
-                        f"Action server '{srv_name}' not available within {server_wait_timeout}s"
-                    )
-                async def _call(request):
-                    fut = rlcpy_client.call_async(request)
-                    return await self.await_rclpy_future(fut)
+            server_ready = rlcpy_client.service_is_ready()
+            if not server_ready:
+                with anyio.move_on_after(server_wait_timeout):
+                    while not server_ready:
+                        await anyio.sleep(0.1)
+                        server_ready = rlcpy_client.service_is_ready()
+            if not server_ready:
+                raise TimeoutError(
+                    f"Action server '{srv_name}' not available within {server_wait_timeout}s"
+                )
 
-                yield _call
-            finally:
-                self.node.destroy_client(rlcpy_client)
+            async def _call(request):
+                fut = rlcpy_client.call_async(request)
+                return await self.await_rclpy_future(fut)
 
-        return _create_service_client()
+            yield _call
+        finally:
+            self.node.destroy_client(rlcpy_client)
 
     async def call_action(
         self,
