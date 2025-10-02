@@ -1,3 +1,5 @@
 from rclpy_async.nodeasync import NodeAsync
+from rclpy_async.utilities import goal_status_str
 
-__all__ = ["NodeAsync"]
+
+__all__ = ["NodeAsync", "goal_status_str"]

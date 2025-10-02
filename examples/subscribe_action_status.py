@@ -22,29 +22,20 @@ Note: Requires turtlesim to be running and rotate_absolute actions to be availab
 import anyio
 import anyio.from_thread
 import rclpy_async
-from action_msgs.msg import GoalStatusArray, GoalStatus
+from action_msgs.msg import GoalStatusArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 import uuid
 from datetime import datetime, timezone
 import threading
+from rclpy_async import goal_status_str
 
-
-STATUS_LABELS = {
-    GoalStatus.STATUS_UNKNOWN: "UNKNOWN",
-    GoalStatus.STATUS_ACCEPTED: "ACCEPTED",
-    GoalStatus.STATUS_EXECUTING: "EXECUTING",
-    GoalStatus.STATUS_CANCELING: "CANCELING",
-    GoalStatus.STATUS_SUCCEEDED: "SUCCEEDED",
-    GoalStatus.STATUS_CANCELED: "CANCELED",
-    GoalStatus.STATUS_ABORTED: "ABORTED",
-}
 
 
 def wait_for_enter(portal, cancel_scope):
     # to be executed on a daemon thread
     input("Press Enter to stop awaiting messages...\n")
+    print("Cancelling message processing loop...")
     portal.call(cancel_scope.cancel)
-    print("Message processing loop cancelled.")
 
 
 def format_goal_uuid(uuid_seq) -> str:
@@ -54,10 +45,6 @@ def format_goal_uuid(uuid_seq) -> str:
         return str(goal_uuid)
     except (ValueError, TypeError):
         return "".join(f"{byte:02x}" for byte in uuid_seq)
-
-
-def describe_status(code: int) -> str:
-    return STATUS_LABELS.get(code, f"UNKNOWN({code})")
 
 
 def format_ros_time(stamp) -> str:
@@ -81,7 +68,7 @@ async def message_receiver(receive_stream):
 
         for index, status in enumerate(msg.status_list, start=1):
             goal_uuid = format_goal_uuid(status.goal_info.goal_id.uuid)
-            status_label = describe_status(status.status)
+            status_label = goal_status_str(status.status)
             goal_stamp = format_ros_time(status.goal_info.stamp)
 
             print(f"  [{goal_stamp}] goal {goal_uuid} {status_label}")

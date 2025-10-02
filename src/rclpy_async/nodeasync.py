@@ -1,6 +1,5 @@
 from __future__ import annotations
 from contextlib import contextmanager, asynccontextmanager
-from enum import Enum
 import logging
 import threading
 from typing import Awaitable, Callable, List, Optional
@@ -18,6 +17,8 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.task import Future as RclpyFuture
 
+from rclpy_async.utilities import goal_status_str
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +28,6 @@ logger = logging.getLogger(__name__)
 # as other threads do not have access to the default event loop context.
 # The solution is to create a BlockingPortal pass it to NodeAsync.
 # The blocking portal is able to pass async tasks to an anyio event loop.
-
-
-class ActionGoalStatus(Enum):
-    STATUS_UNKNOWN = 0
-    STATUS_ACCEPTED = 1
-    STATUS_EXECUTING = 2
-    STATUS_CANCELING = 3
-    STATUS_SUCCEEDED = 4
-    STATUS_CANCELED = 5
-    STATUS_ABORTED = 6
 
 
 class NodeAsync(anyio.AsyncContextManagerMixin):
@@ -353,7 +344,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     if result is None:
                         raise RuntimeError("Action result future returned None.")
                     logger.debug(
-                        f"Goal {ActionGoalStatus(result.status).name} with {result.result}"
+                        f"Goal {goal_status_str(result.status)} with {result.result}"
                     )
                     # result has .status and .result fields
                     return (result.status, result.result)
