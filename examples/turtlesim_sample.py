@@ -64,12 +64,14 @@ async def main_async():
                 async def feedback_handler(msg):
                     logger.info(f"RotateAbsolute feedback: {msg.feedback}")
 
-                rotate_absolute_result = await anode.call_action(
+                async with anode.action_client(
                     action_type=RotateAbsolute,
                     action_name="/turtle1/rotate_absolute",
-                    goal_msg=RotateAbsolute.Goal(theta=3.14),
                     feedback_handler_async=feedback_handler,
-                )
+                ) as rotate_absolute:
+                    rotate_absolute_result = await rotate_absolute(
+                        RotateAbsolute.Goal(theta=3.14)
+                    )
                 logger.info(
                     f"RotateAbsolute action completed with status {rotate_absolute_result}"
                 )

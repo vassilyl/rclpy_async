@@ -269,28 +269,19 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         finally:
             self.node.destroy_client(rlcpy_client)
 
-    async def call_action(
+    @asynccontextmanager
+    async def action_client(
         self,
         action_type,
         action_name: str,
-        goal_msg,
         *,
         feedback_handler_async: Callable[[object], None]
         | Callable[[object], Awaitable[None]]
         | None = None,
-        await_result_scope: Optional[anyio.CancelScope] = None,
         server_wait_timeout: float = 5.0,
-    ) -> tuple[int, object]:
-        """
-        Send a ROS 2 action goal and await its result as an AnyIO task.
-
-        If this coroutine is cancelled, we send a cancel request to the server
-        and then await the terminal result with a short grace period.
-
-        Returns:
-            (status: int, result_msg: object)
-            where status is action_msgs.msg.GoalStatus.STATUS_*
-        """
+    ):
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
         action_client = ActionClient(
             self.node, action_type, action_name, callback_group=self._reentrant_cbg
         )
@@ -307,38 +298,34 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     f"Action server '{action_name}' not available within {server_wait_timeout}s"
                 )
 
-            # Send goal and await goal handle
-            goal_handle = None
-            # Do not allow cancellation until we receive the goal handle
-            with anyio.move_on_after(
-                server_wait_timeout, shield=True
-            ) as send_goal_scope:
-                goal_future = action_client.send_goal_async(
-                    goal_msg,
-                    feedback_callback=lambda feedback_msg: self._portal.start_task_soon(
-                        feedback_handler_async, feedback_msg
+            async def _call(goal_msg):
+                # Send goal and await goal handle
+                goal_handle = None
+                # Do not allow cancellation until we receive the goal handle
+                with anyio.move_on_after(
+                    server_wait_timeout, shield=True
+                ) as send_goal_scope:
+                    goal_future = action_client.send_goal_async(
+                        goal_msg,
+                        feedback_callback=lambda feedback_msg: self._portal.start_task_soon(
+                            feedback_handler_async, feedback_msg
+                        )
+                        if feedback_handler_async is not None
+                        else None,
                     )
-                    if feedback_handler_async is not None
-                    else None,
-                )
 
-                logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
-                goal_handle = await self.await_rclpy_future(goal_future)
-            if send_goal_scope.cancelled_caught:
-                raise RuntimeError("Didn't receive goal handle before timeout.")
+                    logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
+                    goal_handle = await self.await_rclpy_future(goal_future)
+                if send_goal_scope.cancelled_caught:
+                    raise RuntimeError("Didn't receive goal handle before timeout.")
 
-            if goal_handle is None or not goal_handle.accepted:
-                raise RuntimeError("Action goal was rejected by the server.")
+                if goal_handle is None or not goal_handle.accepted:
+                    raise RuntimeError("Action goal was rejected by the server.")
 
-            # Await result; if cancelled, try to cancel the goal on server
-            result_future = goal_handle.get_result_async()
+                # Await result; if cancelled, try to cancel the goal on server
+                result_future = goal_handle.get_result_async()
 
-            logger.debug("Awaiting the goal result...")
-            with (
-                anyio.CancelScope()
-                if await_result_scope is None
-                else await_result_scope
-            ):
+                logger.debug("Awaiting the goal result...")
                 try:
                     result = await self.await_rclpy_future(result_future)
                     if result is None:
@@ -362,8 +349,9 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                                 f"Cancelling {len(cancel_result.goals_canceling)} goals."
                             )
                     raise
+
+            yield _call
         finally:
-            # Optionally destroy the client after use (Node cleanup will also handle it)
             try:
                 action_client.destroy()
             except Exception:
