@@ -16,13 +16,6 @@ import turtlesim.msg
 from turtlesim.srv import TeleportRelative
 
 
-def create_teleport_request(linear: float, angular: float) -> TeleportRelative.Request:
-    req = TeleportRelative.Request()
-    req.linear = linear
-    req.angular = angular
-    return req
-
-
 async def main():
     async with anyio.from_thread.BlockingPortal() as portal:
         async with rclpy_async.NodeAsync(portal, "subscription_last_node") as anode:
@@ -34,20 +27,19 @@ async def main():
                 send_stream.send_nowait,  # skip the message if noone is waiting
                 qos_profile=0,  # does not queue messages in middleware queue
             ):
-                # wait for the next message to arrive
-                before = await receive_stream.receive()
-                print(f"Pose before: {before}")
-                linear, angular = 2.0, 1.57
-                print(f"Teleport relative linear={linear}, angular={angular}")
                 async with anode.service_client(
                     TeleportRelative, "/turtle1/teleport_relative"
                 ) as teleport_relative:
+                    linear, angular = 2.0, 1.57
+                    before = await receive_stream.receive()
+                    print(f"Pose before: {before}")
+                    print(f"Teleport relative linear={linear}, angular={angular}")
                     resp = await teleport_relative(
-                        create_teleport_request(linear, angular)
+                        TeleportRelative.Request(linear=linear, angular=angular)
                     )
-                print(f"Response: {resp}")
-                after = await receive_stream.receive()
-                print(f"Pose after: {after}")
+                    print(f"Response: {resp}")
+                    after = await receive_stream.receive()
+                    print(f"Pose after: {after}")
 
 
 anyio.run(main)
