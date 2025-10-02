@@ -17,7 +17,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.task import Future as RclpyFuture
 
-from rclpy_async.utilities import goal_status_str
+from rclpy_async.utilities import goal_status_str, goal_uuid_str
 
 
 logger = logging.getLogger(__name__)
@@ -272,11 +272,11 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         server_wait_timeout: float = 5.0,
     ):
         """Create an async context manager for a ROS action client.
-        
+
         The context manager yields an async function that takes a goal message,
         sends the goal to the action server, and returns a tuple of (status, result message).
         The function also translates cancel scope cancellation to action goal cancellation.
-        
+
         Parameters
         ----------
         action_type : type
@@ -287,7 +287,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             An async function to handle feedback messages, by default None.
         server_wait_timeout : float, optional
             Time in seconds to wait for the action server to be available, by default 5 seconds.
-        
+
         Returns
         -------
         AsyncContextManager
@@ -336,15 +336,20 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     raise RuntimeError("Action goal was rejected by the server.")
 
                 # Await result; if cancelled, try to cancel the goal on server
+                goal_uuid = (
+                    goal_uuid_str(goal_handle.goal_id.uuid)
+                    if logger.isEnabledFor(logging.DEBUG)
+                    else ""
+                )
                 result_future = goal_handle.get_result_async()
 
-                logger.debug("Awaiting the goal result...")
+                logger.debug(f"Goal {goal_uuid} accepted, awaiting result...")
                 try:
                     result = await self.await_rclpy_future(result_future)
                     if result is None:
                         raise RuntimeError("Action result future returned None.")
                     logger.debug(
-                        f"Goal {goal_status_str(result.status)} with {result.result}"
+                        f"Goal {goal_uuid} {goal_status_str(result.status)} with {result.result}"
                     )
                     # result has .status and .result fields
                     return (result.status, result.result)
@@ -352,15 +357,29 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     # The scope was cancelled.
                     # Request cancellation even if outer scope was cancelled
                     with anyio.move_on_after(server_wait_timeout, shield=True):
-                        logger.debug("Cancelling goal...")
+                        logger.debug(f"Cancelling goal {goal_uuid}...")
                         cancel_future = goal_handle.cancel_goal_async()
                         cancel_result = await self.await_rclpy_future(cancel_future)
                         if cancel_result is None:
                             logger.warning("Cancel request future returned None.")
-                        else:
-                            logger.info(
-                                f"Cancelling {len(cancel_result.goals_canceling)} goals."
+                        elif cancel_result.goals_canceling:
+                            goal_ids = [
+                                gi.goal_id for gi in cancel_result.goals_canceling
+                            ]
+                            goal_ids_str = (
+                                [goal_uuid_str(id.uuid) for id in goal_ids]
+                                if logger.isEnabledFor(logging.DEBUG)
+                                else None
                             )
+                            logger.debug(f"Cancelling goals: {goal_ids_str}.")
+                            if goal_handle.goal_id in goal_ids:
+                                logger.info(
+                                    "The action ACCEPTED cancellation of the goal."
+                                )
+                            else:
+                                logger.info(
+                                    "The action REJECTED cancellation of the goal."
+                                )
                     raise
 
             yield _call

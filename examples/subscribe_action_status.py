@@ -24,10 +24,9 @@ import anyio.from_thread
 import rclpy_async
 from action_msgs.msg import GoalStatusArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
-import uuid
 from datetime import datetime, timezone
 import threading
-from rclpy_async import goal_status_str
+from rclpy_async import goal_status_str, goal_uuid_str
 
 
 
@@ -36,15 +35,6 @@ def wait_for_enter(portal, cancel_scope):
     input("Press Enter to stop awaiting messages...\n")
     print("Cancelling message processing loop...")
     portal.call(cancel_scope.cancel)
-
-
-def format_goal_uuid(uuid_seq) -> str:
-    """Convert a sequence of bytes into a canonical UUID string."""
-    try:
-        goal_uuid = uuid.UUID(bytes=bytes(uuid_seq))
-        return str(goal_uuid)
-    except (ValueError, TypeError):
-        return "".join(f"{byte:02x}" for byte in uuid_seq)
 
 
 def format_ros_time(stamp) -> str:
@@ -67,7 +57,7 @@ async def message_receiver(receive_stream):
         print(f"\nMessage #{message_count} with {len(msg.status_list)} status entries:")
 
         for index, status in enumerate(msg.status_list, start=1):
-            goal_uuid = format_goal_uuid(status.goal_info.goal_id.uuid)
+            goal_uuid = goal_uuid_str(status.goal_info.goal_id.uuid)
             status_label = goal_status_str(status.status)
             goal_stamp = format_ros_time(status.goal_info.stamp)
 
