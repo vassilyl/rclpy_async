@@ -128,7 +128,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 self._context = None
                 logger.debug(f"ROS node '{self._node_name}' shutdown complete")
 
-    def create_subscription(
+    def subscription(
         self,
         msg_type,
         topic_name,

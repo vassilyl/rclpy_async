@@ -34,10 +34,10 @@ def clear_receive_buffer(
 
 async def main_async():
     async with anyio.from_thread.BlockingPortal() as portal:
-        async with NodeAsync(portal, "anyio_turtlesim") as app:
+        async with NodeAsync(portal, "anyio_turtlesim") as anode:
             send_stream, receive_stream = anyio.create_memory_object_stream()
 
-            with app.create_subscription(
+            with anode.subscription(
                 Pose, "/turtle1/pose", send_stream.send_nowait, qos_profile=1
             ):
                 for _ in range(2):
@@ -47,7 +47,7 @@ async def main_async():
                         f"linear_velocity={pose.linear_velocity:.3f} angular_velocity={pose.angular_velocity:.3f}"
                     )
 
-                teleport_relative = app.create_service_client(
+                teleport_relative = anode.create_service_client(
                     TeleportRelative, "/turtle1/teleport_relative"
                 )
                 req = TeleportRelative.Request()
@@ -65,7 +65,7 @@ async def main_async():
                 async def feedback_handler(msg):
                     logger.info(f"RotateAbsolute feedback: {msg.feedback}")
 
-                rotate_absolute_result = await app.call_action(
+                rotate_absolute_result = await anode.call_action(
                     action_type=RotateAbsolute,
                     action_name="/turtle1/rotate_absolute",
                     goal_msg=RotateAbsolute.Goal(theta=3.14),

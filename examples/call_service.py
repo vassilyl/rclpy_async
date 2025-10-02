@@ -26,7 +26,7 @@ async def main():
         async with rclpy_async.NodeAsync(portal, "subscription_last_node") as anode:
             # create a pair of memory streams without a buffer (size=0)
             send_stream, receive_stream = anyio.create_memory_object_stream(0)
-            with anode.create_subscription(
+            with anode.subscription(
                 turtlesim.msg.Pose,
                 "/turtle1/pose",
                 send_stream.send_nowait,  # skip the message if noone is waiting
