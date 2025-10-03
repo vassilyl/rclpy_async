@@ -25,7 +25,7 @@ import turtlesim.msg
 
 async def main():
     async with anyio.from_thread.BlockingPortal() as portal:
-        async with rclpy_async.NodeAsync(portal, "subscription_last_node") as anode:
+        with rclpy_async.NodeAsync(portal, "subscription_last_node") as anode:
             # create a pair of memory streams without a buffer (size=0)
             send_stream, receive_stream = anyio.create_memory_object_stream(0)
             with anode.subscription(

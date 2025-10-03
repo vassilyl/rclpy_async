@@ -34,7 +34,7 @@ All snippets assume: `from rclpy_async.nodeasync import NodeAsync` and `import a
 ### Create a Node
 ```python
 async with anyio.from_thread.BlockingPortal() as portal:
-	async with NodeAsync(portal, "demo") as node:
+	with NodeAsync(portal, "demo") as node:
 		...
 ```
 

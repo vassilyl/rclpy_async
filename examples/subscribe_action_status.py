@@ -68,7 +68,7 @@ async def main():
     CancelError = anyio.get_cancelled_exc_class()
     try:
         async with anyio.from_thread.BlockingPortal() as portal:
-            async with rclpy_async.NodeAsync(
+            with rclpy_async.NodeAsync(
                 portal, "action_status_subscription_node"
             ) as anode:
                 # Create a pair of memory streams, middleware to deal with buffering

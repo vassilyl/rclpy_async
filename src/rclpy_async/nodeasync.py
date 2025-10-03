@@ -30,13 +30,13 @@ logger = logging.getLogger(__name__)
 # The blocking portal is able to pass async tasks to an anyio event loop.
 
 
-class NodeAsync(anyio.AsyncContextManagerMixin):
+class NodeAsync(anyio.ContextManagerMixin):
     """
     Manages rclpy init/shutdown and runs an Executor in a background thread so AnyIO can drive the app.
 
     Usage:
         async with BlockingPortal() as portal:
-            async with RosAsyncBridge("anyio_action_node") as app:
+            with NodeAsync("anyio_action_node") as app:
                 # Use app helper methods or app.node directly
     """
 
@@ -66,15 +66,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         self._reentrant_cbg = ReentrantCallbackGroup()
         self.node: Optional[Node] = None
 
-    def __enter__(self):
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        self.shutdown()
-
-    @asynccontextmanager
-    async def __asynccontextmanager__(self):
+    @contextmanager
+    def __contextmanager__(self):
         try:
             self.start()
             yield self
@@ -97,17 +90,24 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         self._executor.add_node(self.node)
 
         # start spinning thread
-        threading.Thread(
-            target=self._executor.spin, name="rclpy-executor", daemon=True
-        ).start()
+        self._spin_thread = threading.Thread(
+            target=self._executor.spin, name=self._node_name+"_spin", daemon=True
+        )
+        self._spin_thread.start()
 
     def shutdown(self):
+        if self.node is None:
+            logger.debug(f"Node '{self._node_name}' is not running")
+            return
         logger.debug(f"Shutting down node '{self._node_name}'")
         try:
-            if self._executor is not None:
-                if self.node is not None:
-                    self._executor.remove_node(self.node)
-                self._executor.shutdown()
+            executor = self._executor
+            if executor is not None:
+                executor.remove_node(self.node)
+                executor.shutdown()
+                self._spin_thread.join(timeout=5.0)
+                if self._spin_thread.is_alive():
+                    logger.warning("Spin thread did not terminate")
                 self._executor = None
         finally:
             try:

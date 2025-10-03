@@ -34,7 +34,7 @@ def clear_receive_buffer(
 
 async def main_async():
     async with anyio.from_thread.BlockingPortal() as portal:
-        async with NodeAsync(portal, "anyio_turtlesim") as anode:
+        with NodeAsync(portal, "anyio_turtlesim") as anode:
             send_stream, receive_stream = anyio.create_memory_object_stream()
 
             with anode.subscription(
@@ -87,4 +87,4 @@ if __name__ == "__main__":
     try:
         main()
     except BaseException as e:
-        logger.info(f"Exiting due to {type(e).__name__}")
+        logger.info(f"Exiting due to {type(e).__name__}", exc_info=True)

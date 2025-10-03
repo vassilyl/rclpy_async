@@ -46,7 +46,7 @@ async def main_script(anode: rclpy_async.NodeAsync):
 async def main():
     """Sets up resources for the main script."""
     async with anyio.from_thread.BlockingPortal() as portal:
-        async with rclpy_async.NodeAsync(portal, "action_cancel_node") as anode:
+        with rclpy_async.NodeAsync(portal, "action_cancel_node") as anode:
             await main_script(anode)
 
 
