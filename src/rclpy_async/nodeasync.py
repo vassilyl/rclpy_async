@@ -380,6 +380,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                                 logger.info(
                                     "The action REJECTED cancellation of the goal."
                                 )
+                        # wait the action completes cancellation
+                        await self.await_rclpy_future(result_future)
                     raise
 
             yield _call
