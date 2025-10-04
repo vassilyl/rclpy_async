@@ -6,6 +6,7 @@ from typing import Awaitable, Callable, List, Optional
 
 import anyio
 import anyio.from_thread
+import anyio.to_thread
 
 
 import rclpy
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # The blocking portal is able to pass async tasks to an anyio event loop.
 
 
-class NodeAsync(anyio.ContextManagerMixin):
+class NodeAsync(anyio.AsyncContextManagerMixin):
     """
     Manages rclpy init/shutdown and runs an Executor in a background thread so AnyIO can drive the app.
 
@@ -66,58 +67,46 @@ class NodeAsync(anyio.ContextManagerMixin):
         self._reentrant_cbg = ReentrantCallbackGroup()
         self.node: Optional[Node] = None
 
-    @contextmanager
-    def __contextmanager__(self):
-        try:
-            self.start()
-            yield self
-        finally:
-            self.shutdown()
-
-    def start(self):
-        logger.debug(f"Starting node '{self._node_name}'")
-        self._context = Context()
-        rclpy.init(args=self._args, context=self._context, domain_id=self._domain_id)
-        self.node = rclpy.create_node(
+    @asynccontextmanager
+    async def __asynccontextmanager__(self):
+        name = self._node_name or "(no name)"
+        logger.debug(f"Starting node '{name}'")
+        context = Context()
+        rclpy.init(args=self._args, context=context, domain_id=self._domain_id)
+        node = rclpy.create_node(
             self._node_name,
-            context=self._context,
+            context=context,
             namespace=self._namespace,  # type: ignore  (invalid annotation in rclpy)
             enable_rosout=self._enable_rosout,
             start_parameter_services=self._start_parameter_services,
         )
-        logger.debug(f"Created ROS node '{self._node_name}'")
-        self._executor = MultiThreadedExecutor(context=self._context)
-        self._executor.add_node(self.node)
+        logger.debug(f"Created ROS node '{name}'")
+        executor = MultiThreadedExecutor(context=context)
+        executor.add_node(node)
 
         # start spinning thread
-        self._spin_thread = threading.Thread(
-            target=self._executor.spin, name=self._node_name+"_spin", daemon=True
+        spin_thread = threading.Thread(
+            target=executor.spin, name=name+"_spin", daemon=True
         )
-        self._spin_thread.start()
-
-    def shutdown(self):
-        if self.node is None:
-            logger.debug(f"Node '{self._node_name}' is not running")
-            return
-        logger.debug(f"Shutting down node '{self._node_name}'")
+        spin_thread.start()
         try:
-            executor = self._executor
-            if executor is not None:
-                executor.remove_node(self.node)
-                executor.shutdown()
-                self._spin_thread.join(timeout=5.0)
-                if self._spin_thread.is_alive():
-                    logger.warning("Spin thread did not terminate")
-                self._executor = None
+            self.node = node
+            yield self
         finally:
+            logger.debug(f"Shutting down node '{self._node_name}'")
             try:
-                if self.node is not None:
-                    self.node.destroy_node()
-                    self.node = None
+                executor.remove_node(node)
+                # shutdown blocks until work is complete,
+                # should not block event loop as work can be scheduled here
+                await anyio.to_thread.run_sync(executor.shutdown)
+                if spin_thread.is_alive():
+                    logger.warning("Spin thread did not terminate")
             finally:
-                rclpy.shutdown(context=self._context)  # type: ignore  (invalid annotation in rclpy)
-                self._context = None
-                logger.debug(f"ROS node '{self._node_name}' shutdown complete")
+                try:
+                    node.destroy_node()
+                finally:
+                    context.shutdown()
+                    logger.debug(f"ROS node '{self._node_name}' shutdown complete")
 
     @contextmanager
     def subscription(
@@ -175,7 +164,7 @@ class NodeAsync(anyio.ContextManagerMixin):
         try:
             yield subscription
         finally:
-            subscription.destroy()
+            self.node.destroy_subscription(subscription)
 
     async def await_rclpy_future(self, fut: RclpyFuture, **kwargs):
         evt = anyio.Event()
