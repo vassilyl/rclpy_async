@@ -155,7 +155,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         topic_name : str
             The name of the ROS topic to subscribe to (e.g., "/chat").
         async_callback : Callable[[object], Awaitable[None]] or Callable[[object], None]
-            An async function to call the with each incoming message.
+            An async function to call with each incoming message.
         qos_profile : QoSProfile or int
             The QoS profile to use (e.g., 1 for default reliability).
 
