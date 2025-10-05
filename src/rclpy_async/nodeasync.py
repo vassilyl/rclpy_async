@@ -270,7 +270,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                         server_ready = rlcpy_client.service_is_ready()
             if not server_ready:
                 raise TimeoutError(
-                    f"Action server '{srv_name}' not available within {server_wait_timeout}s"
+                    f"Service server '{srv_name}' not available within {server_wait_timeout}s"
                 )
 
             async def _call(request):
