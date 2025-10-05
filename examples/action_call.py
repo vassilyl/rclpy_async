@@ -30,7 +30,7 @@ async def main():
                 async with anode.action_client(
                     RotateAbsolute, "/turtle1/rotate_absolute"
                 ) as rotate_absolute:
-                    theta = 1.57
+                    theta = 2.0
                     before = await receive_stream.receive()
                     print(f"Pose before: {before}")
                     print(f"Rotate absolute angular={theta}")

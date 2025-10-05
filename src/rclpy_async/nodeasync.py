@@ -23,24 +23,8 @@ from rclpy_async.utilities import goal_status_str, goal_uuid_str
 
 logger = logging.getLogger(__name__)
 
-# To interoperate with async frameworks rclpy executor callback threads
-# must communicate with the event loop.
-# Functions in `anyio.from_thread` can only be called from anyio worker threads
-# as other threads do not have access to the default event loop context.
-# The solution is to create a BlockingPortal pass it to NodeAsync.
-# The blocking portal is able to pass async tasks to an anyio event loop.
-
 
 class NodeAsync(anyio.AsyncContextManagerMixin):
-    """
-    Manages rclpy init/shutdown and runs an Executor in a background thread so AnyIO can drive the app.
-
-    Usage:
-        async with BlockingPortal() as portal:
-            with NodeAsync("anyio_action_node") as app:
-                # Use app helper methods or app.node directly
-    """
-
     def __init__(
         self,
         portal: anyio.from_thread.BlockingPortal,
@@ -51,12 +35,25 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         start_parameter_services: bool = True,
         domain_id: int | None = None,
     ):
-        # node_name must conform to ROS 2 naming rules:
-        #  - must be 1-255 characters long
-        #  - must only contain alphanumeric characters and underscores (a-z|A-Z|0-9|_)
-        #  - must not start with a number
-        #
-        # domain_id must be in the range 0-101.
+        """Create an asynchronous ROS node wrapper bound to an AnyIO portal.
+
+        Parameters
+        ----------
+        portal : anyio.from_thread.BlockingPortal
+            The portal that bridges executor callback threads with the AnyIO event loop.
+        node_name : str
+            Name of the ROS node to create. Must satisfy ROS 2 naming rules.
+        args : list[str] | None, optional
+            Command line arguments passed to ``rclpy.init``.
+        namespace : str | None, optional
+            Namespace prefix applied to the node when created.
+        enable_rosout : bool, optional
+            Whether to publish rosout logs for the node, defaults to True.
+        start_parameter_services : bool, optional
+            Whether to create parameter services (describe/get/set) for the node, defaults to True.
+        domain_id : int | None, optional
+            ROS domain identifier to join. If ``None`` the default domain is used.
+        """
         self._portal = portal
         self._node_name = node_name
         self._args = args
@@ -86,7 +83,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
 
         # start spinning thread
         spin_thread = threading.Thread(
-            target=executor.spin, name=name+"_spin", daemon=True
+            target=executor.spin, name=name + "_spin", daemon=True
         )
         spin_thread.start()
         try:
@@ -96,17 +93,40 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             logger.debug(f"Shutting down node '{self._node_name}'")
             try:
                 executor.remove_node(node)
+
                 # shutdown blocks until work is complete,
                 # should not block event loop as work can be scheduled here
-                await anyio.to_thread.run_sync(executor.shutdown)
+                def _shutdown():
+                    executor.shutdown()
+                    spin_thread.join(timeout=1.0)
+
+                await anyio.to_thread.run_sync(_shutdown)
                 if spin_thread.is_alive():
-                    logger.warning("Spin thread did not terminate")
+                    logger.warning(
+                        "Spin thread did not terminate in 1 sec,"
+                        " some ROS work may not be complete yet."
+                    )
             finally:
                 try:
                     node.destroy_node()
                 finally:
                     context.shutdown()
                     logger.debug(f"ROS node '{self._node_name}' shutdown complete")
+
+    def _portal_cb(
+        self, callback: Callable[..., None] | Callable[..., Awaitable[None]]
+    ):
+        def _cb(*args):
+            try:
+                self._portal.start_task_soon(callback, *args)
+            except RuntimeError:
+                # This portal is not running
+                logger.debug(
+                    "Runtime error in scheduling subscription callback.",
+                    exc_info=True,
+                )
+
+        return _cb
 
     @contextmanager
     def subscription(
@@ -120,8 +140,12 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         Create a context manager to subscribe to a ROS topic.
 
         While in the context, each message registers a task in the AnyIO event loop
-        to call the async_callback. Exiting the context destroys the subscription
+        to call the ``async_callback``. Exiting the context destroys the subscription
         and stops processing of incoming messages.
+
+        Note that exceptions raised by ``async_callback`` run inside an AnyIO task
+        and are not propagated back to the caller of ``subscription``; handle errors
+        within your callback (e.g., with try/except) to surface them appropriately.
 
 
         Parameters
@@ -144,20 +168,10 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
 
-        def _cb(msg):
-            try:
-                self._portal.start_task_soon(async_callback, msg)
-            except RuntimeError as e:
-                # This portal is not running?
-                logger.debug(
-                    f"Runtime error in scheduling subscription callback: {e}",
-                    exc_info=True,
-                )
-
         subscription = self.node.create_subscription(
             msg_type,
             topic_name,
-            _cb,
+            self._portal_cb(async_callback),
             qos_profile,
             callback_group=self._reentrant_cbg,
         )
@@ -167,16 +181,34 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             self.node.destroy_subscription(subscription)
 
     async def await_rclpy_future(self, fut: RclpyFuture, **kwargs):
+        """Await completion of an rclpy Future from within the AnyIO event loop.
+
+        The method registers a callback on ``fut`` that notifies the AnyIO loop
+        when the ROS executor marks the future as done, then awaits that
+        notification. If the future completes with an exception, the exception is
+        raised; otherwise the resolved result is returned.
+
+        Parameters
+        ----------
+        fut : rclpy.task.Future
+            The rclpy future to wait on. It should originate from the executor
+            associated with this node.
+        **kwargs
+            Present for API compatibility; currently unused.
+
+        Returns
+        -------
+        Any
+            The result stored in ``fut`` once it completes successfully.
+
+        Raises
+        ------
+        Exception
+            Re-raises any exception set on the future.
+        """
         evt = anyio.Event()
 
-        def _cb(_):
-            try:
-                self._portal.start_task_soon(evt.set)
-            except RuntimeError:
-                # This portal is not running
-                pass
-
-        fut.add_done_callback(_cb)
+        fut.add_done_callback(self._portal_cb(lambda _: evt.set()))
         if fut.done():
             exc = fut.exception()
             if exc:
@@ -266,6 +298,10 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         sends the goal to the action server, and returns a tuple of (status, result message).
         The function also translates cancel scope cancellation to action goal cancellation.
 
+        Note that exceptions raised by ``feedback_handler_async`` run inside an AnyIO task
+        and are not propagated back to the caller of ``action_client``; handle errors
+        within your callback (e.g., with try/except) to surface them appropriately.
+
         Parameters
         ----------
         action_type : type
@@ -309,9 +345,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 ) as send_goal_scope:
                     goal_future = action_client.send_goal_async(
                         goal_msg,
-                        feedback_callback=lambda feedback_msg: self._portal.start_task_soon(
-                            feedback_handler_async, feedback_msg
-                        )
+                        feedback_callback=self._portal_cb(feedback_handler_async)
                         if feedback_handler_async is not None
                         else None,
                     )
