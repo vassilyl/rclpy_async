@@ -1,11 +1,11 @@
-"""Example of calling a service and subscribing to a topic using rclpy_async and anyio.
+"""Example of calling an action and subscribing to a topic using rclpy_async and anyio.
 
 This script demonstrates how to create an asynchronous ROS 2 node that subscribes to
-turtle pose messages from the turtlesim package, calls a service to teleport the turtle,
-and prints the pose before and after the teleportation.
+turtle pose messages from the turtlesim package, calls the RotateAbsolute action to rotate the turtle,
+and prints the pose before and after the rotation.
 
 Run:
-    python examples/call_service.py
+    python examples/action_call.py
     Requires that `turtlesim` is running, e.g.:
     ros2 run turtlesim turtlesim_node"""
 
