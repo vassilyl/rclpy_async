@@ -34,10 +34,10 @@ def clear_receive_buffer(
 
 async def main_async():
     async with anyio.from_thread.BlockingPortal() as portal:
-        async with NodeAsync(portal, "anyio_turtlesim") as app:
-            send_stream, receive_stream = anyio.create_memory_object_stream(1)
+        async with NodeAsync(portal, "anyio_turtlesim") as anode:
+            send_stream, receive_stream = anyio.create_memory_object_stream()
 
-            async with app.create_subscription(
+            with anode.subscription(
                 Pose, "/turtle1/pose", send_stream.send_nowait, qos_profile=1
             ):
                 for _ in range(2):
@@ -46,15 +46,14 @@ async def main_async():
                         f"[pose] x={pose.x:.3f} y={pose.y:.3f} theta={pose.theta:.3f} "
                         f"linear_velocity={pose.linear_velocity:.3f} angular_velocity={pose.angular_velocity:.3f}"
                     )
-
-                teleport_relative = app.create_service_client(
+                async with anode.service_client(
                     TeleportRelative, "/turtle1/teleport_relative"
-                )
-                req = TeleportRelative.Request()
-                req.linear = 2.0
-                req.angular = 1.57
-                resp = await teleport_relative(req)
-                logger.info(f"TeleportRelative response: {resp}")
+                ) as teleport_relative:
+                    req = TeleportRelative.Request()
+                    req.linear = 2.0
+                    req.angular = 1.57
+                    resp = await teleport_relative(req)
+                    logger.info(f"TeleportRelative response: {resp}")
                 clear_receive_buffer(receive_stream)
                 pose = await receive_stream.receive()
                 logger.info(
@@ -65,12 +64,14 @@ async def main_async():
                 async def feedback_handler(msg):
                     logger.info(f"RotateAbsolute feedback: {msg.feedback}")
 
-                rotate_absolute_result = await app.call_action(
+                async with anode.action_client(
                     action_type=RotateAbsolute,
                     action_name="/turtle1/rotate_absolute",
-                    goal_msg=RotateAbsolute.Goal(theta=3.14),
                     feedback_handler_async=feedback_handler,
-                )
+                ) as rotate_absolute:
+                    rotate_absolute_result = await rotate_absolute(
+                        RotateAbsolute.Goal(theta=3.14)
+                    )
                 logger.info(
                     f"RotateAbsolute action completed with status {rotate_absolute_result}"
                 )
@@ -86,4 +87,4 @@ if __name__ == "__main__":
     try:
         main()
     except BaseException as e:
-        logger.info(f"Exiting due to {type(e).__name__}")
+        logger.info(f"Exiting due to {type(e).__name__}", exc_info=True)
