@@ -10,7 +10,6 @@ Requires that `turtlesim` is running, e.g.:
 
 import logging
 import anyio
-import anyio.from_thread
 import anyio.streams.memory
 
 from turtlesim.msg import Pose
@@ -33,48 +32,47 @@ def clear_receive_buffer(
 
 
 async def main_async():
-    async with anyio.from_thread.BlockingPortal() as portal:
-        async with NodeAsync(portal, "anyio_turtlesim") as anode:
-            send_stream, receive_stream = anyio.create_memory_object_stream()
+    async with NodeAsync("anyio_turtlesim") as anode:
+        send_stream, receive_stream = anyio.create_memory_object_stream()
 
-            with anode.subscription(
-                Pose, "/turtle1/pose", send_stream.send_nowait, qos_profile=1
-            ):
-                for _ in range(2):
-                    pose = await receive_stream.receive()
-                    logger.info(
-                        f"[pose] x={pose.x:.3f} y={pose.y:.3f} theta={pose.theta:.3f} "
-                        f"linear_velocity={pose.linear_velocity:.3f} angular_velocity={pose.angular_velocity:.3f}"
-                    )
-                async with anode.service_client(
-                    TeleportRelative, "/turtle1/teleport_relative"
-                ) as teleport_relative:
-                    req = TeleportRelative.Request()
-                    req.linear = 2.0
-                    req.angular = 1.57
-                    resp = await teleport_relative(req)
-                    logger.info(f"TeleportRelative response: {resp}")
-                clear_receive_buffer(receive_stream)
+        with anode.subscription(
+            Pose, "/turtle1/pose", send_stream.send_nowait, qos_profile=1
+        ):
+            for _ in range(2):
                 pose = await receive_stream.receive()
                 logger.info(
                     f"[pose] x={pose.x:.3f} y={pose.y:.3f} theta={pose.theta:.3f} "
                     f"linear_velocity={pose.linear_velocity:.3f} angular_velocity={pose.angular_velocity:.3f}"
                 )
+            async with anode.service_client(
+                TeleportRelative, "/turtle1/teleport_relative"
+            ) as teleport_relative:
+                req = TeleportRelative.Request()
+                req.linear = 2.0
+                req.angular = 1.57
+                resp = await teleport_relative(req)
+                logger.info(f"TeleportRelative response: {resp}")
+            clear_receive_buffer(receive_stream)
+            pose = await receive_stream.receive()
+            logger.info(
+                f"[pose] x={pose.x:.3f} y={pose.y:.3f} theta={pose.theta:.3f} "
+                f"linear_velocity={pose.linear_velocity:.3f} angular_velocity={pose.angular_velocity:.3f}"
+            )
 
-                async def feedback_handler(msg):
-                    logger.info(f"RotateAbsolute feedback: {msg.feedback}")
+            async def feedback_task(msg):
+                logger.info(f"RotateAbsolute feedback: {msg.feedback}")
 
-                async with anode.action_client(
-                    action_type=RotateAbsolute,
-                    action_name="/turtle1/rotate_absolute",
-                    feedback_handler_async=feedback_handler,
-                ) as rotate_absolute:
-                    rotate_absolute_result = await rotate_absolute(
-                        RotateAbsolute.Goal(theta=3.14)
-                    )
-                logger.info(
-                    f"RotateAbsolute action completed with status {rotate_absolute_result}"
+            async with anode.action_client(
+                action_type=RotateAbsolute,
+                action_name="/turtle1/rotate_absolute",
+                feedback_task=feedback_task,
+            ) as rotate_absolute:
+                rotate_absolute_result = await rotate_absolute(
+                    RotateAbsolute.Goal(theta=3.14)
                 )
+            logger.info(
+                f"RotateAbsolute action completed with status {rotate_absolute_result}"
+            )
 
 
 def main():

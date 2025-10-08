@@ -16,18 +16,22 @@ Usage:
     Run `python examples/subscribe_action_status.py`
     Press Enter to stop the subscription loop.
 
-Note: Requires turtlesim to be running and rotate_absolute actions to be available.
+Note: Requires turtlesim to be running. If no action goal has been sent,
+no messages will be received. You can send a goal using the example:
+`examples/action_call.py` or `examples/action_call_cancel.py`.
+Alternatively, from command line:
+    ros2 action send_goal /turtle1/rotate_absolute turtlesim/action/RotateAbsolute '{"theta": 5.0}'
 """
+
+from datetime import datetime, timezone
+import threading
 
 import anyio
 import anyio.from_thread
-import rclpy_async
 from action_msgs.msg import GoalStatusArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
-from datetime import datetime, timezone
-import threading
-from rclpy_async import goal_status_str, goal_uuid_str
 
+from rclpy_async import NodeAsync, goal_status_str, goal_uuid_str
 
 
 def wait_for_enter(portal, cancel_scope):
@@ -67,37 +71,39 @@ async def message_receiver(receive_stream):
 async def main():
     CancelError = anyio.get_cancelled_exc_class()
     try:
-        async with anyio.from_thread.BlockingPortal() as portal:
-            async with rclpy_async.NodeAsync(
-                portal, "action_status_subscription_node"
-            ) as anode:
-                # Create a pair of memory streams, middleware to deal with buffering
-                send_stream, receive_stream = anyio.create_memory_object_stream()
+        async with NodeAsync(
+            "action_status_subscription_node"
+        ) as anode:
+            # Create a pair of memory streams, middleware to deal with buffering
+            send_stream, receive_stream = anyio.create_memory_object_stream()
 
-                # Create QoS profile with transient local durability for action status
-                qos_profile = QoSProfile(
-                    durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-                    reliability=QoSReliabilityPolicy.RELIABLE,
-                    depth=10,
-                )
+            # Create QoS profile with transient local durability for action status
+            qos_profile = QoSProfile(
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                depth=10,
+            )
 
-                async with send_stream, receive_stream:
-                    topic = "/turtle1/rotate_absolute/_action/status"
-                    with anode.subscription(
-                        GoalStatusArray,
-                        topic,
-                        # do not skip messages, block the subscription callback thread
-                        # until message_receiver starts processing the message
-                        send_stream.send,
-                        qos_profile=qos_profile,
-                    ):
-                        print(f"Listening for messages on {topic}")
-                        # await message_receiver(receive_stream)
+            async with send_stream, receive_stream:
+                topic = "/turtle1/rotate_absolute/_action/status"
+                with anode.subscription(
+                    GoalStatusArray,
+                    topic,
+                    # do not skip messages, block the subscription callback thread
+                    # until message_receiver starts processing the message
+                    send_stream.send,
+                    qos_profile=qos_profile,
+                ):
+                    print(f"Listening for messages on {topic}")
+                    # await message_receiver(receive_stream)
 
-                        with anyio.CancelScope() as scope:
+                    with anyio.CancelScope() as scope:
+                        # start a daemon thread to cancel the scope on user request
+                        async with anyio.from_thread.BlockingPortal() as portal:
                             threading.Thread(
                                 target=wait_for_enter, args=(portal, scope), daemon=True
                             ).start()
+                            # run the message receiver until the scope is cancelled
                             await message_receiver(receive_stream)
     except CancelError:
         print("Cancelled by a SIGINT event or Ctrl+C. Exiting...")
