@@ -11,7 +11,7 @@ import anyio.to_thread
 
 import rclpy
 from rclpy.context import Context
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
 from rclpy.qos import QoSProfile, qos_profile_services_default
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -80,10 +80,15 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 logger.debug(f"Created ROS node '{name}'")
                 executor = SingleThreadedExecutor(context=context)
                 executor.add_node(node)
+                def _spin():
+                    try:
+                        executor.spin()
+                    except ExternalShutdownException:
+                        pass
 
                 # start spinning thread
                 spin_thread = threading.Thread(
-                    target=executor.spin, name=name + "_spin", daemon=True
+                    target=_spin, name=name + "_spin", daemon=True
                 )
                 spin_thread.start()
                 try:
