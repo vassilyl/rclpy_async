@@ -26,7 +26,7 @@ async def main():
             send_stream.send_nowait,  # skip the message if noone is waiting
             qos_profile=0,  # does not queue messages in middleware queue
         ):
-            async with anode.service_client(
+            with anode.service_client(
                 TeleportRelative, "/turtle1/teleport_relative"
             ) as teleport_relative:
                 linear, angular = 2.0, 1.57

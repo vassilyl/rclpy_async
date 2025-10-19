@@ -24,6 +24,39 @@ import inspect
 logger = logging.getLogger(__name__)
 
 
+class PortalExecutor(SingleThreadedExecutor):
+    """An rclpy SingleThreadedExecutor that swallows ExternalShutdownException."""
+
+    def __init__(
+        self, *, context: Context, portal: anyio.from_thread.BlockingPortal
+    ) -> None:
+        super().__init__(context=context)
+        self._portal = portal
+
+    async def _execute_service_anyio(self, srv, request, header):
+        response = await srv.callback(request, srv.srv_type.Response())
+        srv.send_response(response, header)
+
+    async def _execute_service(self, srv, request_and_header):
+        if request_and_header is None:
+            return
+        (request, header) = request_and_header
+        if request:
+            if inspect.iscoroutinefunction(srv.callback):
+                self._portal.start_task_soon(
+                    self._execute_service_anyio, srv, request, header
+                )
+            else:
+                response = srv.callback(request, srv.srv_type.Response())
+                srv.send_response(response, header)
+
+    def spin(self):
+        try:
+            super().spin()
+        except ExternalShutdownException:
+            pass
+
+
 class NodeAsync(anyio.AsyncContextManagerMixin):
     def __init__(
         self,
@@ -78,17 +111,11 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     start_parameter_services=self._start_parameter_services,
                 )
                 logger.debug(f"Created ROS node '{name}'")
-                executor = SingleThreadedExecutor(context=context)
+                executor = PortalExecutor(context=context, portal=portal)
                 executor.add_node(node)
-                def _spin():
-                    try:
-                        executor.spin()
-                    except ExternalShutdownException:
-                        pass
-
                 # start spinning thread
                 spin_thread = threading.Thread(
-                    target=_spin, name=name + "_spin", daemon=True
+                    target=executor.spin, name=name + "_spin", daemon=True
                 )
                 spin_thread.start()
                 try:
@@ -142,6 +169,62 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
 
         return _cb
 
+    def _rclpy_acb(
+        self, callback: Callable[..., object] | Callable[..., Awaitable[object]]
+    ):
+        async def _cb(*args):
+            # Runs on rclpy Executor thread
+            try:
+                self._portal.start_task_soon(callback, *args)
+            except RuntimeError:
+                # This portal is not running
+                logger.debug(
+                    "Runtime error in scheduling subscription callback.",
+                    exc_info=True,
+                )
+
+        return _cb
+
+    @contextmanager
+    def publisher(
+        self,
+        msg_type,
+        topic_name: str,
+        qos_profile: QoSProfile | int,
+    ):
+        """
+        Create a context manager to create a ROS topic publisher.
+
+        While in the context, the publisher can be used to publish messages.
+        Exiting the context destroys the publisher.
+
+        Parameters
+        ----------
+        msg_type : type
+            The ROS message type class (e.g., std_msgs.msg.String).
+        topic_name : str
+            The name of the ROS topic to publish to (e.g., "/chat").
+        qos_profile : QoSProfile or int
+            The QoS profile to use (e.g., 1 for default reliability).
+
+        Returns
+        -------
+        ContextManager
+            A context manager that destroys the publisher on exit.
+        """
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
+
+        publisher = self.node.create_publisher(
+            msg_type,
+            topic_name,
+            qos_profile,
+        )
+        try:
+            yield publisher
+        finally:
+            self.node.destroy_publisher(publisher)
+
     @contextmanager
     def subscription(
         self,
@@ -154,7 +237,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         """
         Create a context manager to subscribe to a ROS topic.
 
-        While in the context, each topic message starts a ``callback_task`` 
+        While in the context, each topic message starts a ``callback_task``
         in the AnyIO event loop. Exiting the context destroys the subscription
         and stops processing of incoming messages.
 
@@ -243,8 +326,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             raise exc
         return fut.result()
 
-    @asynccontextmanager
-    async def service_client(
+    @contextmanager
+    def service_client(
         self,
         srv_type,
         srv_name: str,
@@ -252,7 +335,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         qos_profile: QoSProfile = qos_profile_services_default,
         server_wait_timeout: float = 5.0,
     ):
-        """Async context manager for a ROS service client.
+        """Context manager for a ROS service client.
 
         Yields an async callable that sends a service request and waits for
         the server response.
@@ -270,8 +353,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
 
         Returns
         -------
-        AsyncContextManager
-            An async context manager that yields a function to call the service.
+        ContextManager
+            A context manager that yields a function to call the service.
         """
 
         if self.node is None:
@@ -282,8 +365,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             qos_profile=qos_profile,
         )
 
-        try:
-            # Wait for server
+        # Wait for server
+        async def _call(request):
             server_ready = rlcpy_client.service_is_ready()
             if not server_ready:
                 with anyio.move_on_after(server_wait_timeout):
@@ -295,13 +378,71 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     f"Service server '{srv_name}' not available within {server_wait_timeout}s"
                 )
 
-            async def _call(request):
-                fut = rlcpy_client.call_async(request)
-                return await self.await_rclpy_future(fut)
+            fut = rlcpy_client.call_async(request)
+            return await self.await_rclpy_future(fut)
 
+        try:
             yield _call
         finally:
             self.node.destroy_client(rlcpy_client)
+
+    @contextmanager
+    def service_server(
+        self,
+        srv_type,
+        srv_name: str,
+        callback_task: Callable[[object, object], Awaitable[object]]
+        | Callable[[object, object], object],
+        propagate_callback_exceptions: bool = False,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ):
+        """
+        Create a context manager to create a ROS service server.
+
+        While in the context, each service request starts a ``callback_task``
+        in the AnyIO event loop. Exiting the context destroys the service server
+        and stops processing of incoming requests.
+
+        By default exceptions in ``callback_task`` are suppressed. Set
+        ``propagate_callback_exceptions=True`` to propagate exceptions
+        to the caller's scope.
+
+        Parameters
+        ----------
+        srv_type : type
+            The ROS service type class (e.g., std_srvs.srv.SetBool).
+        srv_name : str
+            The name of the ROS service to create (e.g., "/toggle").
+        callback_task : Callable[[object, object], Awaitable[object]] or Callable[[object, object], object]
+            An async function to call with each incoming request.
+        propagate_callback_exceptions : bool, optional
+            If True, exceptions raised by the async callback are propagated
+            to the node's task group, by default False.
+        qos_profile : QoSProfile, optional
+            The QoS profile to use for the service server, by default qos_profile_services_default.
+
+        Returns
+        -------
+        ContextManager
+            A context manager that destroys the service server on exit.
+        """
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
+
+        if propagate_callback_exceptions:
+            if not inspect.iscoroutinefunction(callback_task):
+                raise ValueError(
+                    "propagate_callback_exceptions=True requires an async callback"
+                )
+            _callback_task = self._task_group_cb(callback_task)
+
+        service = self.node.create_service(
+            srv_type, srv_name, callback_task, qos_profile=qos_profile
+        )
+        try:
+            yield service
+        finally:
+            self.node.destroy_service(service)
 
     @asynccontextmanager
     async def action_client(
@@ -319,13 +460,13 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
 
         Yields an async callable that sends a goal to the action server,
         waits for the action result, and returns a tuple of (status, result).
-        The function also translates cancel scope cancellation to 
+        The function also translates cancel scope cancellation to
         ROS action goal cancellation.
 
-        By default exceptions in ``feedback_task`` are suppressed. Set 
+        By default exceptions in ``feedback_task`` are suppressed. Set
         ``propagate_feedback_exceptions=True`` to propagate exceptions
         to the caller's scope.
-        
+
         Parameters
         ----------
         action_type : type
@@ -444,3 +585,14 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 action_client.destroy()
             except Exception:
                 pass
+    def get_logger(self):
+        """Get the logger for this node.
+
+        Returns
+        -------
+        logging.Logger
+            The logger instance associated with this node.
+        """
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
+        return self.node.get_logger()
