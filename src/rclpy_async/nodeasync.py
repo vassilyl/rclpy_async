@@ -16,6 +16,7 @@ from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
 from rclpy.qos import QoSProfile, qos_profile_services_default
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from action_msgs.srv import CancelGoal
 from rclpy.task import Future as RclpyFuture
 
 from rclpy_async.utilities import goal_status_str, goal_uuid_str
@@ -84,6 +85,52 @@ class PortalExecutor(SingleThreadedExecutor):
         except ExternalShutdownException:
             pass
 
+    async def rclpy_future_result(self, fut: RclpyFuture):
+        """Await completion of an rclpy Future from within the AnyIO event loop.
+
+        The method registers a callback on ``fut`` that notifies the AnyIO loop
+        when the ROS executor marks the future as done, then awaits that
+        notification. If the future completes with an exception, the exception is
+        raised; otherwise the resolved result is returned.
+
+        Parameters
+        ----------
+        fut : rclpy.task.Future
+            The rclpy future to wait on. It should originate from the executor
+            associated with this node.
+
+        Returns
+        -------
+        Any
+            The result stored in ``fut`` once it completes successfully.
+
+        Raises
+        ------
+        Exception
+            Re-raises any exception set on the future.
+        """
+        evt = anyio.Event()
+
+        def _done_cb(_):
+            """Switch to task group and set event."""
+
+            async def _set_evt():
+                evt.set()
+
+            self._portal.start_task_soon(self._task_group.start_soon, _set_evt)
+
+        fut.add_done_callback(_done_cb)
+        if fut.done():
+            exc = fut.exception()
+            if exc:
+                raise exc
+            return fut.result()
+        await evt.wait()
+        exc = fut.exception()
+        if exc:
+            raise exc
+        return fut.result()
+
 
 class NodeAsync(anyio.AsyncContextManagerMixin):
     def __init__(
@@ -149,6 +196,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 )
                 spin_thread.start()
                 try:
+                    self._executor = executor
                     self.node = node
                     yield self
                 finally:
@@ -176,6 +224,11 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                             logger.debug(
                                 f"ROS node '{self._node_name}' shutdown complete"
                             )
+
+    async def _rclpy_future_result(self, fut: RclpyFuture):
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
+        return await self._executor.rclpy_future_result(fut)
 
     def _task_group_cb(self, callback: Callable[..., Awaitable[None]]):
         """Move callback task from portal task group to the node's task group."""
@@ -306,46 +359,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         finally:
             self.node.destroy_subscription(subscription)
 
-    async def await_rclpy_future(self, fut: RclpyFuture, **kwargs):
-        """Await completion of an rclpy Future from within the AnyIO event loop.
-
-        The method registers a callback on ``fut`` that notifies the AnyIO loop
-        when the ROS executor marks the future as done, then awaits that
-        notification. If the future completes with an exception, the exception is
-        raised; otherwise the resolved result is returned.
-
-        Parameters
-        ----------
-        fut : rclpy.task.Future
-            The rclpy future to wait on. It should originate from the executor
-            associated with this node.
-        **kwargs
-            Present for API compatibility; currently unused.
-
-        Returns
-        -------
-        Any
-            The result stored in ``fut`` once it completes successfully.
-
-        Raises
-        ------
-        Exception
-            Re-raises any exception set on the future.
-        """
-        evt = anyio.Event()
-
-        fut.add_done_callback(self._rclpy_cb(lambda _: evt.set()))
-        if fut.done():
-            exc = fut.exception()
-            if exc:
-                raise exc
-            return fut.result()
-        await evt.wait()
-        exc = fut.exception()
-        if exc:
-            raise exc
-        return fut.result()
-
     @contextmanager
     def service_client(
         self,
@@ -399,7 +412,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 )
 
             fut = rlcpy_client.call_async(request)
-            return await self.await_rclpy_future(fut)
+            return await self._rclpy_future_result(fut)
 
         try:
             yield _call
@@ -543,7 +556,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     )
 
                     logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
-                    goal_handle = await self.await_rclpy_future(goal_future)
+                    goal_handle = await self._rclpy_future_result(goal_future)
                 if send_goal_scope.cancelled_caught:
                     raise RuntimeError("Didn't receive goal handle before timeout.")
 
@@ -560,7 +573,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
 
                 logger.debug(f"Goal {goal_uuid} accepted, awaiting result...")
                 try:
-                    result = await self.await_rclpy_future(result_future)
+                    result = await self._rclpy_future_result(result_future)
                     if result is None:
                         raise RuntimeError("Action result future returned None.")
                     logger.debug(
@@ -574,9 +587,11 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     with anyio.move_on_after(server_wait_timeout, shield=True):
                         logger.debug(f"Cancelling goal {goal_uuid}...")
                         cancel_future = goal_handle.cancel_goal_async()
-                        cancel_result = await self.await_rclpy_future(cancel_future)
-                        if cancel_result is None:
-                            logger.warning("Cancel request future returned None.")
+                        cancel_result = await self._rclpy_future_result(cancel_future)
+                        if cancel_result is None or not isinstance(
+                            cancel_result, CancelGoal.Response
+                        ):
+                            logger.warning("Invalid cancel response.")
                         elif cancel_result.goals_canceling:
                             goal_ids = [
                                 gi.goal_id for gi in cancel_result.goals_canceling
@@ -596,7 +611,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                                     "The action REJECTED cancellation of the goal."
                                 )
                         # wait the action completes cancellation
-                        await self.await_rclpy_future(result_future)
+                        await self._rclpy_future_result(result_future)
                     raise
 
             yield _call

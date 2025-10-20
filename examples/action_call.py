@@ -20,10 +20,18 @@ async def main():
     async with NodeAsync("subscription_last_node") as anode:
         # create a pair of memory streams without a buffer (size=0)
         send_stream, receive_stream = anyio.create_memory_object_stream(0)
+
+        def send_no_wait_no_raise(msg):
+            """Send message without waiting receiver and without raising WouldBlock."""
+            try:
+                send_stream.send_nowait(msg)
+            except anyio.WouldBlock:
+                pass
+
         with anode.subscription(
             turtlesim.msg.Pose,
             "/turtle1/pose",
-            send_stream.send_nowait,  # skip the message if noone is waiting
+            send_no_wait_no_raise,  # skip the message if noone is waiting
             qos_profile=0,  # does not queue messages in middleware queue
         ):
             async with anode.action_client(
