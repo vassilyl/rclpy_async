@@ -5,6 +5,7 @@ import threading
 from typing import Awaitable, Callable, List, Optional
 
 import anyio
+import anyio.abc
 import anyio.from_thread
 import anyio.to_thread
 
@@ -28,27 +29,49 @@ class PortalExecutor(SingleThreadedExecutor):
     """An rclpy SingleThreadedExecutor that swallows ExternalShutdownException."""
 
     def __init__(
-        self, *, context: Context, portal: anyio.from_thread.BlockingPortal
+        self,
+        *,
+        context: Context,
+        portal: anyio.from_thread.BlockingPortal,
+        task_group: anyio.abc.TaskGroup,
     ) -> None:
         super().__init__(context=context)
         self._portal = portal
+        self._task_group = task_group
 
     async def _execute_service_anyio(self, srv, request, header):
-        response = await srv.callback(request, srv.srv_type.Response())
+        response_template = srv.srv_type.Response()
+        response = (
+            await srv.callback(request, response_template)
+            if inspect.iscoroutinefunction(srv.callback)
+            else srv.callback(request, response_template)
+        )
         srv.send_response(response, header)
+
+    async def _execute_subscription(self, sub, msg):
+        if msg is None:
+            return
+        if inspect.iscoroutinefunction(sub.callback):
+            self._portal.start_task_soon(
+                self._task_group.start_soon,
+                sub.callback,
+                msg,
+            )
+        else:
+            self._portal.start_task_soon(sub.callback, msg)
 
     async def _execute_service(self, srv, request_and_header):
         if request_and_header is None:
             return
         (request, header) = request_and_header
         if request:
-            if inspect.iscoroutinefunction(srv.callback):
-                self._portal.start_task_soon(
-                    self._execute_service_anyio, srv, request, header
-                )
-            else:
-                response = srv.callback(request, srv.srv_type.Response())
-                srv.send_response(response, header)
+            self._portal.start_task_soon(
+                self._task_group.start_soon,
+                self._execute_service_anyio,
+                srv,
+                request,
+                header,
+            )
 
     def spin(self):
         try:
@@ -111,7 +134,9 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     start_parameter_services=self._start_parameter_services,
                 )
                 logger.debug(f"Created ROS node '{name}'")
-                executor = PortalExecutor(context=context, portal=portal)
+                executor = PortalExecutor(
+                    context=context, portal=portal, task_group=self._task_group
+                )
                 executor.add_node(node)
                 # start spinning thread
                 spin_thread = threading.Thread(
@@ -230,20 +255,17 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         self,
         msg_type,
         topic_name,
-        callback_task: Callable[[object], Awaitable[None]] | Callable[[object], None],
+        callback: Callable[[object], Awaitable[None]] | Callable[[object], None],
         qos_profile: QoSProfile | int,
-        propagate_callback_exceptions: bool = False,
     ):
         """
         Create a context manager to subscribe to a ROS topic.
 
-        While in the context, each topic message starts a ``callback_task``
+        While in the context, each topic message starts a ``callback``
         in the AnyIO event loop. Exiting the context destroys the subscription
         and stops processing of incoming messages.
 
-        By default exceptions in ``callback_task`` are suppressed. Set
-        ``propagate_callback_exceptions=True`` to propagate exceptions
-        to the caller's scope.
+        By default exceptions in ``callback`` are suppressed. Set
 
         Parameters
         ----------
@@ -251,7 +273,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             The ROS message type class (e.g., std_msgs.msg.String).
         topic_name : str
             The name of the ROS topic to subscribe to (e.g., "/chat").
-        callback_task : Callable[[object], Awaitable[None]] or Callable[[object], None]
+        callback : Callable[[object], Awaitable[None]] or Callable[[object], None]
             An async function to call with each incoming message.
         qos_profile : QoSProfile or int
             The QoS profile to use (e.g., 1 for default reliability).
@@ -262,23 +284,16 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
 
         Returns
         -------
-        AsyncContextManager
-            An async context manager that destroys the subscription on exit.
+        ContextManager
+            A context manager that destroys the subscription on exit.
         """
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
 
-        _callback_task = callback_task
-        if propagate_callback_exceptions:
-            if not inspect.iscoroutinefunction(callback_task):
-                raise ValueError(
-                    "propagate_callback_exceptions=True requires an async callback"
-                )
-            _callback_task = self._task_group_cb(callback_task)
         subscription = self.node.create_subscription(
             msg_type,
             topic_name,
-            self._rclpy_cb(_callback_task),
+            callback,  # type: ignore (invalid annotation in rclpy)
             qos_profile,
         )
         try:
@@ -585,6 +600,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 action_client.destroy()
             except Exception:
                 pass
+
     def get_logger(self):
         """Get the logger for this node.
 

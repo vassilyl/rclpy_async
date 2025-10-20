@@ -24,7 +24,6 @@ Alternatively, from command line:
 """
 
 from datetime import datetime, timezone
-import threading
 
 import anyio
 import anyio.from_thread
@@ -32,13 +31,6 @@ from action_msgs.msg import GoalStatusArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from rclpy_async import NodeAsync, goal_status_str, goal_uuid_str
-
-
-def wait_for_enter(portal, cancel_scope):
-    # to be executed on a daemon thread
-    input("Press Enter to stop awaiting messages...\n")
-    print("Cancelling message processing loop...")
-    portal.call(cancel_scope.cancel)
 
 
 def format_ros_time(stamp) -> str:
@@ -60,7 +52,7 @@ async def message_receiver(receive_stream):
 
         print(f"\nMessage #{message_count} with {len(msg.status_list)} status entries:")
 
-        for index, status in enumerate(msg.status_list, start=1):
+        for status in msg.status_list:
             goal_uuid = goal_uuid_str(status.goal_info.goal_id.uuid)
             status_label = goal_status_str(status.status)
             goal_stamp = format_ros_time(status.goal_info.stamp)
@@ -89,22 +81,11 @@ async def main():
                 with anode.subscription(
                     GoalStatusArray,
                     topic,
-                    # do not skip messages, block the subscription callback thread
-                    # until message_receiver starts processing the message
                     send_stream.send,
                     qos_profile=qos_profile,
                 ):
                     print(f"Listening for messages on {topic}")
-                    # await message_receiver(receive_stream)
-
-                    with anyio.CancelScope() as scope:
-                        # start a daemon thread to cancel the scope on user request
-                        async with anyio.from_thread.BlockingPortal() as portal:
-                            threading.Thread(
-                                target=wait_for_enter, args=(portal, scope), daemon=True
-                            ).start()
-                            # run the message receiver until the scope is cancelled
-                            await message_receiver(receive_stream)
+                    await message_receiver(receive_stream)
     except CancelError:
         print("Cancelled by a SIGINT event or Ctrl+C. Exiting...")
 
