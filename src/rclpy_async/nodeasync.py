@@ -39,6 +39,23 @@ class PortalExecutor(SingleThreadedExecutor):
         self._portal = portal
         self._task_group = task_group
 
+    async def _execute_subscription_anyio(self, sub, msg):
+        (
+            await sub.callback(msg)
+            if inspect.iscoroutinefunction(sub.callback)
+            else sub.callback(msg)
+        )
+
+    async def _execute_subscription(self, sub, msg):
+        if msg is None:
+            return
+        self._portal.start_task_soon(
+            self._task_group.start_soon,
+            self._execute_subscription_anyio,
+            sub,
+            msg,
+        )
+
     async def _execute_service_anyio(self, srv, request, header):
         response_template = srv.srv_type.Response()
         response = (
@@ -47,18 +64,6 @@ class PortalExecutor(SingleThreadedExecutor):
             else srv.callback(request, response_template)
         )
         srv.send_response(response, header)
-
-    async def _execute_subscription(self, sub, msg):
-        if msg is None:
-            return
-        if inspect.iscoroutinefunction(sub.callback):
-            self._portal.start_task_soon(
-                self._task_group.start_soon,
-                sub.callback,
-                msg,
-            )
-        else:
-            self._portal.start_task_soon(sub.callback, msg)
 
     async def _execute_service(self, srv, request_and_header):
         if request_and_header is None:
