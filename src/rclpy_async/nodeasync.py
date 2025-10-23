@@ -332,12 +332,10 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         topic_name : str
             The name of the ROS topic to subscribe to (e.g., "/chat").
         callback : Callable[[object], Awaitable[None]] or Callable[[object], None]
-            An async function to call with each incoming message.
+            A function to call with each incoming message.
+            The function will run in the AnyIO event loop.
         qos_profile : QoSProfile or int
             The QoS profile to use (e.g., 1 for default reliability).
-        propagate_callback_exceptions : bool, optional
-            If True, exceptions raised by the async callback are propagated
-            to the node's task group, by default False.
 
 
         Returns
@@ -398,8 +396,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             qos_profile=qos_profile,
         )
 
-        # Wait for server
         async def _call(request):
+            """The async function to call and await the service on AnyIO event loop."""
             server_ready = rlcpy_client.service_is_ready()
             if not server_ready:
                 with anyio.move_on_after(server_wait_timeout):
@@ -436,10 +434,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         in the AnyIO event loop. Exiting the context destroys the service server
         and stops processing of incoming requests.
 
-        By default exceptions in ``callback_task`` are suppressed. Set
-        ``propagate_callback_exceptions=True`` to propagate exceptions
-        to the caller's scope.
-
         Parameters
         ----------
         srv_type : type
@@ -448,9 +442,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             The name of the ROS service to create (e.g., "/toggle").
         callback_task : Callable[[object, object], Awaitable[object]] or Callable[[object, object], object]
             An async function to call with each incoming request.
-        propagate_callback_exceptions : bool, optional
-            If True, exceptions raised by the async callback are propagated
-            to the node's task group, by default False.
         qos_profile : QoSProfile, optional
             The QoS profile to use for the service server, by default qos_profile_services_default.
 
@@ -461,13 +452,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         """
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
-
-        if propagate_callback_exceptions:
-            if not inspect.iscoroutinefunction(callback_task):
-                raise ValueError(
-                    "propagate_callback_exceptions=True requires an async callback"
-                )
-            _callback_task = self._task_group_cb(callback_task)
 
         service = self.node.create_service(
             srv_type, srv_name, callback_task, qos_profile=qos_profile
