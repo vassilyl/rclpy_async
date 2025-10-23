@@ -5,14 +5,12 @@ import threading
 from typing import Awaitable, Callable, List, Optional
 
 import anyio
-import anyio.abc
 import anyio.from_thread
 import anyio.to_thread
 
 
 import rclpy
 from rclpy.context import Context
-from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
 from rclpy.qos import QoSProfile, qos_profile_services_default
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -20,134 +18,10 @@ from action_msgs.srv import CancelGoal
 from rclpy.task import Future as RclpyFuture
 
 from rclpy_async.utilities import goal_status_str, goal_uuid_str
-import inspect
 
+from .executor import DualThreadExecutor
 
 logger = logging.getLogger(__name__)
-
-
-class DualThreadExecutor(SingleThreadedExecutor):
-    """An rclpy SingleThreadedExecutor that swallows ExternalShutdownException."""
-
-    def __init__(
-        self,
-        *,
-        context: Context,
-        portal: anyio.from_thread.BlockingPortal,
-        task_group: anyio.abc.TaskGroup,
-    ) -> None:
-        super().__init__(context=context)
-        self._portal = portal
-        self._task_group = task_group
-
-    @staticmethod
-    def _call_async(fn):
-        """Async adaptor to a regular function."""
-
-        async def _wrapper(*args, **kwargs):
-            return fn(*args, **kwargs)
-
-        return _wrapper
-
-    def to_task(self, fn: Callable[..., None] | Callable[..., Awaitable[None]]):
-        """Adapt a callback to run in the executor's task group."""
-        callback_async = fn if inspect.iscoroutinefunction(fn) else self._call_async(fn)
-
-        def _callable(*args, **kwargs):
-            return self._portal.start_task_soon(
-                self._task_group.start_soon,
-                callback_async,
-                *args,
-                **kwargs,
-            )
-
-        return _callable
-
-    async def _execute_subscription_anyio(self, sub, msg):
-        (
-            await sub.callback(msg)
-            if inspect.iscoroutinefunction(sub.callback)
-            else sub.callback(msg)
-        )
-
-    async def _execute_subscription(self, sub, msg):
-        if msg is None:
-            return
-        self.to_task(sub.callback)(msg)
-
-    async def _execute_service_anyio(self, srv, request, header):
-        response_template = srv.srv_type.Response()
-        response = (
-            await srv.callback(request, response_template)
-            if inspect.iscoroutinefunction(srv.callback)
-            else srv.callback(request, response_template)
-        )
-        srv.send_response(response, header)
-
-    async def _execute_service(self, srv, request_and_header):
-        if request_and_header is None:
-            return
-        (request, header) = request_and_header
-        if request:
-            self._portal.start_task_soon(
-                self._task_group.start_soon,
-                self._execute_service_anyio,
-                srv,
-                request,
-                header,
-            )
-
-    def spin(self):
-        try:
-            super().spin()
-        except ExternalShutdownException:
-            pass
-
-    async def rclpy_future_result(self, fut: RclpyFuture):
-        """Await completion of an rclpy Future from within the AnyIO event loop.
-
-        The method registers a callback on ``fut`` that notifies the AnyIO loop
-        when the ROS executor marks the future as done, then awaits that
-        notification. If the future completes with an exception, the exception is
-        raised; otherwise the resolved result is returned.
-
-        Parameters
-        ----------
-        fut : rclpy.task.Future
-            The rclpy future to wait on. It should originate from the executor
-            associated with this node.
-
-        Returns
-        -------
-        Any
-            The result stored in ``fut`` once it completes successfully.
-
-        Raises
-        ------
-        Exception
-            Re-raises any exception set on the future.
-        """
-        evt = anyio.Event()
-
-        def _done_cb(_):
-            """Switch to task group and set event."""
-
-            async def _set_evt():
-                evt.set()
-
-            self._portal.start_task_soon(self._task_group.start_soon, _set_evt)
-
-        fut.add_done_callback(_done_cb)
-        if fut.done():
-            exc = fut.exception()
-            if exc:
-                raise exc
-            return fut.result()
-        await evt.wait()
-        exc = fut.exception()
-        if exc:
-            raise exc
-        return fut.result()
 
 
 class NodeAsync(anyio.AsyncContextManagerMixin):
@@ -541,7 +415,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     server_wait_timeout, shield=True
                 ) as send_goal_scope:
                     goal_future = action_client.send_goal_async(
-                        goal_msg, feedback_callback=feedback_task
+                        goal_msg,
+                        feedback_callback=self._executor.to_task(feedback_task),
                     )
 
                     logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
