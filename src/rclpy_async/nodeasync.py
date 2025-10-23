@@ -14,12 +14,13 @@ from rclpy.context import Context
 from rclpy.qos import QoSProfile, qos_profile_services_default
 from rclpy.node import Node
 from rclpy.action import ActionClient
+import rclpy.action.server
 from action_msgs.srv import CancelGoal
-from rclpy.task import Future as RclpyFuture
 
 from rclpy_async.utilities import goal_status_str, goal_uuid_str
 
 from .executor import DualThreadExecutor
+from .action_server import ActionServerAsync
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +441,84 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 action_client.destroy()
             except Exception:
                 pass
+
+    @contextmanager
+    def action_server(
+        self,
+        action_type,
+        action_name: str,
+        execute_callback: Callable[[object], Awaitable[object]]
+        | Callable[[object], object],
+        *,
+        goal_callback: Optional[
+            Callable[[object], Awaitable[bool]] | Callable[[object], bool]
+        ] = None,
+        accept_cancellations: bool = True,
+        goal_service_qos_profile=rclpy.action.server.qos_profile_services_default,
+        result_service_qos_profile=rclpy.action.server.qos_profile_services_default,
+        cancel_service_qos_profile=rclpy.action.server.qos_profile_services_default,
+        feedback_pub_qos_profile=rclpy.action.server.QoSProfile(depth=10),
+        status_pub_qos_profile=rclpy.action.server.qos_profile_action_status_default,
+        result_timeout=900,
+    ):
+        """
+        Create a context manager to create a ROS action server.
+
+        While in the context, each goal request starts an ``execute_callback``
+        in the AnyIO event loop. Exiting the context destroys the action server
+        and stops processing of incoming goals.
+
+        Parameters
+        ----------
+        action_type : type
+            The ROS action type class (e.g., example_interfaces.action.Fibonacci).
+        action_name : str
+            The name of the ROS action to create (e.g., "/fibonacci").
+        execute_callback : Callable[[object], Awaitable[object]] or Callable[[object], object]
+            An async function to call with each incoming goal.
+        goal_callback : Callable[[object], Awaitable[bool]] or Callable[[object], bool], optional
+            An optional async function to call to accept/reject incoming goals.
+        accept_cancellations : bool, optional
+            Whether to accept cancellation requests from clients, by default True.
+        goal_service_qos_profile : QoSProfile, optional
+            The QoS profile to use for the goal service, by default qos_profile_services_default.
+        result_service_qos_profile : QoSProfile, optional
+            The QoS profile to use for the result service, by default qos_profile_services_default.
+        cancel_service_qos_profile : QoSProfile, optional
+            The QoS profile to use for the cancel service, by default qos_profile_services_default.
+        feedback_pub_qos_profile : QoSProfile, optional
+            The QoS profile to use for the feedback publisher, by default a depth 10 profile.
+        status_pub_qos_profile : QoSProfile, optional
+            The QoS profile to use for the status publisher, by default qos_profile_action_status_default.
+        result_timeout : int, optional
+            How long in seconds a result is kept by the server after a goal
+            reaches a terminal state.
+        Returns
+        -------
+        ContextManager
+            A context manager that destroys the action server on exit.
+        """
+        if self.node is None:
+            raise RuntimeError("ROS node is not initialized.")
+
+        action_server = ActionServerAsync(
+            self.node,
+            action_type,
+            action_name,
+            execute_callback,
+            goal_callback=goal_callback,
+            accept_cancellations=accept_cancellations,
+            goal_service_qos_profile=goal_service_qos_profile,
+            result_service_qos_profile=result_service_qos_profile,
+            cancel_service_qos_profile=cancel_service_qos_profile,
+            feedback_pub_qos_profile=feedback_pub_qos_profile,
+            status_pub_qos_profile=status_pub_qos_profile,
+            result_timeout=result_timeout,
+        )
+        try:
+            yield action_server
+        finally:
+            action_server.destroy()
 
     def get_logger(self):
         """Get the logger for this node.
