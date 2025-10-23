@@ -34,7 +34,7 @@ async def main():
             send_no_wait_no_raise,  # skip the message if noone is waiting
             qos_profile=0,  # does not queue messages in middleware queue
         ):
-            async with anode.action_client(
+            with anode.action_client(
                 RotateAbsolute, "/turtle1/rotate_absolute"
             ) as rotate_absolute:
                 theta = 2.0

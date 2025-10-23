@@ -117,49 +117,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                                 f"ROS node '{self._node_name}' shutdown complete"
                             )
 
-    async def _rclpy_future_result(self, fut: RclpyFuture):
-        if self.node is None:
-            raise RuntimeError("ROS node is not initialized.")
-        return await self._executor.rclpy_future_result(fut)
-
-    def _task_group_cb(self, callback: Callable[..., Awaitable[None]]):
-        """Move callback task from portal task group to the node's task group."""
-
-        async def _cb(*args):
-            self._task_group.start_soon(callback, *args)
-
-        return _cb
-
-    def _rclpy_cb(self, callback: Callable[..., None] | Callable[..., Awaitable[None]]):
-        def _cb(*args):
-            # Runs on rclpy Executor thread
-            try:
-                self._portal.start_task_soon(callback, *args)
-            except RuntimeError:
-                # This portal is not running
-                logger.debug(
-                    "Runtime error in scheduling subscription callback.",
-                    exc_info=True,
-                )
-
-        return _cb
-
-    def _rclpy_acb(
-        self, callback: Callable[..., object] | Callable[..., Awaitable[object]]
-    ):
-        async def _cb(*args):
-            # Runs on rclpy Executor thread
-            try:
-                self._portal.start_task_soon(callback, *args)
-            except RuntimeError:
-                # This portal is not running
-                logger.debug(
-                    "Runtime error in scheduling subscription callback.",
-                    exc_info=True,
-                )
-
-        return _cb
-
     @contextmanager
     def publisher(
         self,
@@ -302,7 +259,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 )
 
             fut = rlcpy_client.call_async(request)
-            return await self._rclpy_future_result(fut)
+            return await self._executor.rclpy_future_result(fut)
 
         try:
             yield _call
@@ -353,15 +310,12 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         finally:
             self.node.destroy_service(service)
 
-    @asynccontextmanager
-    async def action_client(
+    @contextmanager
+    def action_client(
         self,
         action_type,
         action_name: str,
         *,
-        feedback_task: Callable[[object], None]
-        | Callable[[object], Awaitable[None]]
-        | None = None,
         server_wait_timeout: float = 5.0,
     ):
         """Async context manager for a ROS action client.
@@ -394,7 +348,13 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
         action_client = ActionClient(self.node, action_type, action_name)
-        try:
+
+        async def _call(
+            goal_msg: object,
+            feedback_task: Callable[[object], None]
+            | Callable[[object], Awaitable[None]]
+            | None = None,
+        ) -> tuple[int, object]:
             # Wait for server
             server_ready = action_client.server_is_ready()
             if not server_ready:
@@ -407,77 +367,73 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     f"Action server '{action_name}' not available within {server_wait_timeout}s"
                 )
 
-            async def _call(goal_msg: object) -> tuple[int, object]:
-                # Send goal and await goal handle
-                goal_handle = None
-                # Do not allow cancellation until we receive the goal handle
-                with anyio.move_on_after(
-                    server_wait_timeout, shield=True
-                ) as send_goal_scope:
-                    goal_future = action_client.send_goal_async(
-                        goal_msg,
-                        feedback_callback=self._executor.to_task(feedback_task),
-                    )
-
-                    logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
-                    goal_handle = await self._rclpy_future_result(goal_future)
-                if send_goal_scope.cancelled_caught:
-                    raise RuntimeError("Didn't receive goal handle before timeout.")
-
-                if goal_handle is None or not goal_handle.accepted:
-                    raise RuntimeError("Action goal was rejected by the server.")
-
-                # Await result; if cancelled, try to cancel the goal on server
-                goal_uuid = (
-                    goal_uuid_str(goal_handle.goal_id.uuid)
-                    if logger.isEnabledFor(logging.DEBUG)
-                    else ""
+            # Send goal and await goal handle
+            goal_handle = None
+            # Do not allow cancellation until we receive the goal handle
+            with anyio.move_on_after(
+                server_wait_timeout, shield=True
+            ) as send_goal_scope:
+                goal_future = action_client.send_goal_async(
+                    goal_msg,
+                    feedback_callback=self._executor.to_task(feedback_task),
                 )
-                result_future = goal_handle.get_result_async()
 
-                logger.debug(f"Goal {goal_uuid} accepted, awaiting result...")
-                try:
-                    result = await self._rclpy_future_result(result_future)
-                    if result is None:
-                        raise RuntimeError("Action result future returned None.")
-                    logger.debug(
-                        f"Goal {goal_uuid} {goal_status_str(result.status)} with {result.result}"
+                logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
+                goal_handle = await self._executor.rclpy_future_result(goal_future)
+            if send_goal_scope.cancelled_caught:
+                raise RuntimeError("Didn't receive goal handle before timeout.")
+
+            if goal_handle is None or not goal_handle.accepted:
+                raise RuntimeError("Action goal was rejected by the server.")
+
+            # Await result; if cancelled, try to cancel the goal on server
+            goal_uuid = (
+                goal_uuid_str(goal_handle.goal_id.uuid)
+                if logger.isEnabledFor(logging.DEBUG)
+                else ""
+            )
+            result_future = goal_handle.get_result_async()
+
+            logger.debug(f"Goal {goal_uuid} accepted, awaiting result...")
+            try:
+                result = await self._executor.rclpy_future_result(result_future)
+                if result is None:
+                    raise RuntimeError("Action result future returned None.")
+                logger.debug(
+                    f"Goal {goal_uuid} {goal_status_str(result.status)} with {result.result}"
+                )
+                # result has .status and .result fields
+                return (result.status, result.result)
+            except anyio.get_cancelled_exc_class():
+                # The scope was cancelled.
+                # Request cancellation even if outer scope was cancelled
+                with anyio.move_on_after(server_wait_timeout, shield=True):
+                    logger.debug(f"Cancelling goal {goal_uuid}...")
+                    cancel_future = goal_handle.cancel_goal_async()
+                    cancel_result = await self._executor.rclpy_future_result(
+                        cancel_future
                     )
-                    # result has .status and .result fields
-                    return (result.status, result.result)
-                except anyio.get_cancelled_exc_class():
-                    # The scope was cancelled.
-                    # Request cancellation even if outer scope was cancelled
-                    with anyio.move_on_after(server_wait_timeout, shield=True):
-                        logger.debug(f"Cancelling goal {goal_uuid}...")
-                        cancel_future = goal_handle.cancel_goal_async()
-                        cancel_result = await self._rclpy_future_result(cancel_future)
-                        if cancel_result is None or not isinstance(
-                            cancel_result, CancelGoal.Response
-                        ):
-                            logger.warning("Invalid cancel response.")
-                        elif cancel_result.goals_canceling:
-                            goal_ids = [
-                                gi.goal_id for gi in cancel_result.goals_canceling
-                            ]
-                            goal_ids_str = (
-                                [goal_uuid_str(id.uuid) for id in goal_ids]
-                                if logger.isEnabledFor(logging.DEBUG)
-                                else None
-                            )
-                            logger.debug(f"Cancelling goals: {goal_ids_str}.")
-                            if goal_handle.goal_id in goal_ids:
-                                logger.info(
-                                    "The action ACCEPTED cancellation of the goal."
-                                )
-                            else:
-                                logger.info(
-                                    "The action REJECTED cancellation of the goal."
-                                )
-                        # wait the action completes cancellation
-                        await self._rclpy_future_result(result_future)
-                    raise
+                    if cancel_result is None or not isinstance(
+                        cancel_result, CancelGoal.Response
+                    ):
+                        logger.warning("Invalid cancel response.")
+                    elif cancel_result.goals_canceling:
+                        goal_ids = [gi.goal_id for gi in cancel_result.goals_canceling]
+                        goal_ids_str = (
+                            [goal_uuid_str(id.uuid) for id in goal_ids]
+                            if logger.isEnabledFor(logging.DEBUG)
+                            else None
+                        )
+                        logger.debug(f"Cancelling goals: {goal_ids_str}.")
+                        if goal_handle.goal_id in goal_ids:
+                            logger.info("The action ACCEPTED cancellation of the goal.")
+                        else:
+                            logger.info("The action REJECTED cancellation of the goal.")
+                    # wait the action completes cancellation
+                    await self._executor.rclpy_future_result(result_future)
+                raise
 
+        try:
             yield _call
         finally:
             try:
