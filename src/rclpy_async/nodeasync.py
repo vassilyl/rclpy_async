@@ -26,7 +26,7 @@ import inspect
 logger = logging.getLogger(__name__)
 
 
-class PortalExecutor(SingleThreadedExecutor):
+class DualThreadExecutor(SingleThreadedExecutor):
     """An rclpy SingleThreadedExecutor that swallows ExternalShutdownException."""
 
     def __init__(
@@ -40,6 +40,29 @@ class PortalExecutor(SingleThreadedExecutor):
         self._portal = portal
         self._task_group = task_group
 
+    @staticmethod
+    def _call_async(fn):
+        """Async adaptor to a regular function."""
+
+        async def _wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        return _wrapper
+
+    def to_task(self, fn: Callable[..., None] | Callable[..., Awaitable[None]]):
+        """Adapt a callback to run in the executor's task group."""
+        callback_async = fn if inspect.iscoroutinefunction(fn) else self._call_async(fn)
+
+        def _callable(*args, **kwargs):
+            return self._portal.start_task_soon(
+                self._task_group.start_soon,
+                callback_async,
+                *args,
+                **kwargs,
+            )
+
+        return _callable
+
     async def _execute_subscription_anyio(self, sub, msg):
         (
             await sub.callback(msg)
@@ -50,12 +73,7 @@ class PortalExecutor(SingleThreadedExecutor):
     async def _execute_subscription(self, sub, msg):
         if msg is None:
             return
-        self._portal.start_task_soon(
-            self._task_group.start_soon,
-            self._execute_subscription_anyio,
-            sub,
-            msg,
-        )
+        self.to_task(sub.callback)(msg)
 
     async def _execute_service_anyio(self, srv, request, header):
         response_template = srv.srv_type.Response()
@@ -186,7 +204,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     start_parameter_services=self._start_parameter_services,
                 )
                 logger.debug(f"Created ROS node '{name}'")
-                executor = PortalExecutor(
+                executor = DualThreadExecutor(
                     context=context, portal=portal, task_group=self._task_group
                 )
                 executor.add_node(node)
@@ -471,7 +489,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         | Callable[[object], Awaitable[None]]
         | None = None,
         server_wait_timeout: float = 5.0,
-        propagate_feedback_exceptions: bool = False,
     ):
         """Async context manager for a ROS action client.
 
@@ -494,9 +511,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             An async function to handle feedback messages, by default None.
         server_wait_timeout : float, optional
             Time in seconds to wait for the action server to be available, by default 5 seconds.
-        propagate_feedback_exceptions : bool, optional
-            If True, exceptions raised by the async feedback_task are propagated
-            to the node's task group, by default False.
 
         Returns
         -------
@@ -518,15 +532,6 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                 raise TimeoutError(
                     f"Action server '{action_name}' not available within {server_wait_timeout}s"
                 )
-            _feedback = feedback_task
-            if _feedback is not None:
-                if propagate_feedback_exceptions:
-                    if not inspect.iscoroutinefunction(feedback_task):
-                        raise ValueError(
-                            "propagate_feedback_exceptions=True requires an async feedback_task"
-                        )
-                    _feedback = self._task_group_cb(feedback_task)
-                _feedback = self._rclpy_cb(_feedback)
 
             async def _call(goal_msg: object) -> tuple[int, object]:
                 # Send goal and await goal handle
@@ -536,7 +541,7 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
                     server_wait_timeout, shield=True
                 ) as send_goal_scope:
                     goal_future = action_client.send_goal_async(
-                        goal_msg, feedback_callback=_feedback
+                        goal_msg, feedback_callback=feedback_task
                     )
 
                     logger.debug(f"Sent goal to {action_name}, awaiting goal handle...")
