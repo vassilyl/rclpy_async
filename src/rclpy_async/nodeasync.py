@@ -1,5 +1,6 @@
 from __future__ import annotations
 from contextlib import contextmanager, asynccontextmanager
+import inspect
 import logging
 import threading
 from typing import Awaitable, Callable, List, Optional
@@ -13,14 +14,16 @@ import rclpy
 from rclpy.context import Context
 from rclpy.qos import QoSProfile, qos_profile_services_default
 from rclpy.node import Node
-from rclpy.action import ActionClient
+from rclpy.action import ActionClient, ActionServer
 import rclpy.action.server
+from rclpy.action.server import ServerGoalHandle as ActionServerGoalHandle
+from rclpy.action.server import CancelResponse as ActionCancelResponse
+from rclpy.action.server import GoalResponse as ActionGoalResponse
 from action_msgs.srv import CancelGoal
 
 from rclpy_async.utilities import goal_status_str, goal_uuid_str
 
 from .executor import DualThreadExecutor
-from .action_server import ActionServerAsync
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,8 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         self._start_parameter_services = start_parameter_services
         self._domain_id = domain_id
         self.node: Optional[Node] = None
+        # the below belongs to anyio event loop, do not touch from other threads
+        self._cancellation_scopes = {}
 
     @asynccontextmanager
     async def __asynccontextmanager__(self):
@@ -442,6 +447,108 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
             except Exception:
                 pass
 
+    async def _execute_anyio_task(
+        self,
+        execute_future: rclpy.Future,
+        execute: Callable[[ActionServerGoalHandle], Awaitable[object] | object],
+        goal_handle: ActionServerGoalHandle,
+    ):
+        """The AnyIO task that runs the action goal execute callback.
+
+        Creates a cancellation scope for the goal, runs the execute callback,
+        and returns the result via execute_future.
+        """
+        goal_id = bytes(goal_handle.goal_id.uuid)
+        cancel_scope = anyio.CancelScope()
+        self._cancellation_scopes[goal_id] = cancel_scope
+        try:
+            with cancel_scope:
+                if inspect.iscoroutinefunction(execute):
+                    result = await execute(goal_handle)
+                else:
+                    result = execute(goal_handle)
+                execute_future.set_result(result)
+            if cancel_scope.cancelled_caught:
+                execute_future.set_result(None)
+        except Exception as e:
+            execute_future.set_exception(e)
+        finally:
+            del self._cancellation_scopes[goal_id]
+
+    def _wrap_execute(
+        self,
+        execute: Callable[[ActionServerGoalHandle], Awaitable[object] | object],
+        empty_result: object,
+    ):
+        async def _call(
+            goal_handle: ActionServerGoalHandle,
+        ):
+            # spin thread starts this callback
+            execute_future = rclpy.Future()
+            spawn_anyio_task = self._executor.to_task(self._execute_anyio_task)
+            if spawn_anyio_task is not None:
+                spawn_anyio_task(execute_future, execute, goal_handle)
+                result = await execute_future
+                if result is None:
+                    goal_handle.canceled()
+                    return empty_result
+                else:
+                    return result
+            raise RuntimeError("Failed to spawn AnyIO task for action goal execution.")
+
+        return _call
+
+    async def _goal_anyio_task(
+        self,
+        rclpy_future: rclpy.Future,
+        goal_callback: Callable[[object], Awaitable[bool]] | Callable[[object], bool],
+        goal_handle: ActionServerGoalHandle,
+    ):
+        try:
+            if inspect.iscoroutinefunction(goal_callback):
+                result = await goal_callback(goal_handle)
+            else:
+                result = goal_callback(goal_handle)
+            rclpy_future.set_result(
+                ActionGoalResponse.ACCEPT if result else ActionGoalResponse.REJECT
+            )
+        except Exception as e:
+            rclpy_future.set_exception(e)
+
+    def _wrap_goal(
+        self,
+        goal_callback: Callable[[object], Awaitable[bool]] | Callable[[object], bool],
+    ):
+        async def _call(
+            goal_handle: ActionServerGoalHandle,
+        ):
+            # spin thread starts this callback
+            goal_future = rclpy.Future()
+            spawn_anyio_task = self._executor.to_task(self._execute_anyio_task)
+            if spawn_anyio_task is not None:
+                spawn_anyio_task(goal_future, goal_callback, goal_handle)
+                return await goal_future
+            raise RuntimeError("Failed to spawn AnyIO task for action goal execution.")
+
+        return _call
+
+    def _cancellation_anyio_task(self, rclpy_future, goal_id):
+        cancel_scope = self._cancellation_scopes.get(goal_id, None)
+        if isinstance(cancel_scope, anyio.CancelScope):
+            cancel_scope.cancel()
+            rclpy_future.set_result(ActionCancelResponse.ACCEPT)
+        else:
+            rclpy_future.set_result(ActionCancelResponse.REJECT)
+
+    async def _cancellation_rclpy_task(self, goal_handle):
+        goal_id = bytes(goal_handle.goal_id.uuid)
+        cancellation_future = rclpy.Future()
+        spawn_anyio_task = self._executor.to_task(self._cancellation_anyio_task)
+        if spawn_anyio_task is not None:
+            spawn_anyio_task(cancellation_future, goal_id)
+            return await cancellation_future
+        return ActionCancelResponse.REJECT
+
     @contextmanager
     def action_server(
         self,
@@ -501,13 +608,17 @@ class NodeAsync(anyio.AsyncContextManagerMixin):
         if self.node is None:
             raise RuntimeError("ROS node is not initialized.")
 
-        action_server = ActionServerAsync(
+        action_server = ActionServer(
             self.node,
             action_type,
             action_name,
-            execute_callback,
-            goal_callback=goal_callback,
-            accept_cancellations=accept_cancellations,
+            self._wrap_execute(execute_callback, action_type.Result()),
+            goal_callback=None
+            if goal_callback is None
+            else self._wrap_goal(goal_callback),
+            cancel_callback=self._cancellation_rclpy_task
+            if accept_cancellations
+            else rclpy.action.server.default_cancel_callback,
             goal_service_qos_profile=goal_service_qos_profile,
             result_service_qos_profile=result_service_qos_profile,
             cancel_service_qos_profile=cancel_service_qos_profile,
