@@ -51,6 +51,9 @@ async def main():
 
     async with rclpy_async.start_xtor() as xtor:
         xtor.add_node(node)
+        if not await rclpy_async.server_ready(client.service_is_ready):
+            print("Service '/turtle1/teleport_relative' not available")
+            return
         # wait for the next message to arrive
         before = await receive_stream.receive()
         print(f"Pose before: {before}")

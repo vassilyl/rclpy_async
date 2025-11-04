@@ -53,7 +53,7 @@ async def main():
         xtor.add_node(node)
 
         # Wait for action server to be available
-        if not await rclpy_async.wait_for_action_server(action_client):
+        if not await rclpy_async.server_ready(action_client.server_is_ready):
             print("Action server '/turtle1/rotate_absolute' not available")
             return
 

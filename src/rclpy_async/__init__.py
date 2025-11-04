@@ -1,3 +1,4 @@
+from typing import Callable
 import anyio
 import rclpy
 
@@ -20,8 +21,8 @@ async def future_result(fut: rclpy.Future):
     return fut.result()
 
 
-async def wait_for_action_server(
-    action_client,
+async def server_ready(
+    server_ready: Callable[[], bool],
     server_wait_timeout: float = 5.0,
     polling_interval: float = 0.1,
 ) -> bool:
@@ -33,13 +34,13 @@ async def wait_for_action_server(
     :param polling_interval: Time in seconds between availability checks (default: 0.1).
     :return: True if server is available, False if timeout.
     """
-    server_ready = action_client.server_is_ready()
-    if not server_ready:
+    ready = server_ready()
+    if not ready:
         with anyio.move_on_after(server_wait_timeout):
-            while not server_ready:
+            while not ready:
                 await anyio.sleep(polling_interval)
-                server_ready = action_client.server_is_ready()
-    return server_ready
+                ready = server_ready()
+    return ready
 
 
 __all__ = [
