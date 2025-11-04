@@ -528,10 +528,12 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
                 # Continue spinning even if there's an error
                 pass
 
+    def create_task(self, coro: Callable[..., Awaitable[None]], *args):
+        """Create a task in the task group."""
+        self._task_group.start_soon(coro, *args)
+
     def _execute_in_task_group(
-        self,
-        coro: Callable[..., Awaitable[None]],
-        *args,
+        self, coro: Callable[..., Awaitable[None]], *args
     ) -> None:
         """Helper to execute a function in the task group."""
         self._portal.start_task_soon(self._task_group.start_soon, coro, *args)
