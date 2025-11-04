@@ -18,9 +18,10 @@ Note: Requires turtlesim to be running for messages to be available.
 """
 
 import anyio
-from rclpy_async import AsyncExecutor
 import rclpy
 import turtlesim.msg
+
+import rclpy_async
 
 # Zero buffer stream doesn't keep messages. 
 # If a receiver awaits a message the stream passes sent message to the receiver.
@@ -47,8 +48,8 @@ async def main():
         qos_profile=0,  # does not queue messages in middleware queue
     )
 
-    async with AsyncExecutor() as executor:
-        executor.add_node(node)
+    async with rclpy_async.AsyncExecutor() as xtor:
+        xtor.add_node(node)
         # wait for the next message to arrive
         msg = await receive_stream.receive()
         print(msg)

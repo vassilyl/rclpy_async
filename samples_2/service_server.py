@@ -1,7 +1,7 @@
 import anyio
+import rclpy
 from example_interfaces.srv import AddTwoInts
 
-import rclpy
 import rclpy_async
 
 
@@ -19,8 +19,8 @@ async def main():
         "add_two_ints",
         handle_add_two_ints,
     )
-    async with rclpy_async.AsyncExecutor() as executor:
-        executor.add_node(node)
+    async with rclpy_async.AsyncExecutor() as xtor:
+        xtor.add_node(node)
         print ("""
 Service 'add_two_ints' of type 'example_interfaces/srv/AddTwoInts' is ready.
 You can call it with

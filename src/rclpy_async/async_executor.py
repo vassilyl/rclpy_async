@@ -554,16 +554,3 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
                     # Wait for spin thread to finish
                     if self._spin_thread:
                         self._spin_thread.join(timeout=1.0)
-
-    async def future_result(self, fut: rclpy.Future):
-        """
-        Await a future and return its result.
-
-        :param fut: The future to await.
-        :return: The result of the future.
-        """
-        if not fut.done():
-            evt = anyio.Event()
-            fut.add_done_callback(lambda f: evt.set())
-            await evt.wait()
-        return fut.result()

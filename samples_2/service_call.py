@@ -10,10 +10,11 @@ Run:
     ros2 run turtlesim turtlesim_node"""
 
 import anyio
-from rclpy_async import AsyncExecutor
 import rclpy
 import turtlesim.msg
 import turtlesim.srv
+
+import rclpy_async
 
 # Zero buffer stream doesn't keep messages.
 # If a receiver awaits a message the stream passes sent message to the receiver.
@@ -48,14 +49,14 @@ async def main():
     request.linear = 2.0
     request.angular = 1.57
 
-    async with AsyncExecutor() as executor:
-        executor.add_node(node)
+    async with rclpy_async.AsyncExecutor() as xtor:
+        xtor.add_node(node)
         # wait for the next message to arrive
         before = await receive_stream.receive()
         print(f"Pose before: {before}")
 
         print(f"Teleport relative linear={request.linear}, angular={request.angular}")
-        resp = await executor.future_result(client.call_async(request))
+        resp = await rclpy_async.future_result(client.call_async(request))
         print(f"Response: {resp}")
 
         after = await receive_stream.receive()
