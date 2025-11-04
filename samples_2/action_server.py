@@ -39,13 +39,12 @@ async def main():
 
     rclpy.action.ActionServer(node, Fibonacci, "fibonacci", execute_callback)
 
-    CancelError = anyio.get_cancelled_exc_class()
     try:
         async with rclpy_async.AsyncExecutor() as xctor:
             xctor.add_node(node)
             print(help)
             await anyio.sleep_forever()
-    except CancelError:
+    except anyio.get_cancelled_exc_class():
         print("Ctrl+C detected, shutting down service...")
 
 
