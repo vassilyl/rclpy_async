@@ -7,7 +7,7 @@ import rclpy_async
 
 
 async def start_inner_service(*, task_status=anyio.TASK_STATUS_IGNORED):
-    async with rclpy_async.AsyncExecutor() as xtor:
+    async with rclpy_async.start_xtor() as xtor:
         node = rclpy.create_node("add_two_ints_service_node")
         logger = node.get_logger()
 
@@ -24,7 +24,7 @@ async def start_inner_service(*, task_status=anyio.TASK_STATUS_IGNORED):
 
 
 async def start_outer_service(*, task_status=anyio.TASK_STATUS_IGNORED):
-    async with rclpy_async.AsyncExecutor() as xtor:
+    async with rclpy_async.start_xtor() as xtor:
         reentrant = rclpy.callback_groups.ReentrantCallbackGroup()
         node = rclpy.create_node("add_twice_service_node")
         logger = node.get_logger()
@@ -36,6 +36,7 @@ async def start_outer_service(*, task_status=anyio.TASK_STATUS_IGNORED):
             logger.info(f"Calling inner service with: {a}, {b}")
             future = client_outer_server.call_async(AddTwoInts.Request(a=a, b=b))
             result = await rclpy_async.future_result(future)
+            assert isinstance(result, AddTwoInts.Response)
             logger.info(f"Inner service response: {result.sum}")
             return result
 
@@ -62,7 +63,7 @@ async def main():
         await tg.start(start_inner_service)
         await tg.start(start_outer_service)
 
-        async with rclpy_async.AsyncExecutor() as xtor:
+        async with rclpy_async.start_xtor() as xtor:
             node_client = rclpy.create_node("add_twice_client")
             client_outer = node_client.create_client(AddTwoInts, "add_twice")
             xtor.add_node(node_client)
@@ -71,6 +72,7 @@ async def main():
             request = AddTwoInts.Request(a=2, b=3)
             future = client_outer.call_async(request)
             result = await rclpy_async.future_result(future)
+            assert isinstance(result, AddTwoInts.Response)
             node_client.get_logger().info(f"Client received response: {result.sum}")
 
         # stop the servers gracefully

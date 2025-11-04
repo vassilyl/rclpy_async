@@ -2,7 +2,7 @@ import anyio
 import rclpy
 
 from rclpy_async.nodeasync import NodeAsync
-from rclpy_async.async_executor import AsyncExecutor
+from rclpy_async.async_executor import start_xtor
 from rclpy_async.utilities import goal_status_str, goal_uuid_str
 
 
@@ -44,7 +44,7 @@ async def wait_for_action_server(
 
 __all__ = [
     "NodeAsync",
-    "AsyncExecutor",
+    "start_xtor",
     "goal_status_str",
     "goal_uuid_str",
     "future_result",

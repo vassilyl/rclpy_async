@@ -48,7 +48,7 @@ async def main():
         qos_profile=0,  # does not queue messages in middleware queue
     )
 
-    async with rclpy_async.AsyncExecutor() as xtor:
+    async with rclpy_async.start_xtor() as xtor:
         xtor.add_node(node)
         # wait for the next message to arrive
         msg = await receive_stream.receive()

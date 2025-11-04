@@ -49,7 +49,7 @@ async def main():
     # Create action client
     action_client = ActionClient(node, RotateAbsolute, "/turtle1/rotate_absolute")
 
-    async with rclpy_async.AsyncExecutor() as xtor:
+    async with rclpy_async.start_xtor() as xtor:
         xtor.add_node(node)
 
         # Wait for action server to be available

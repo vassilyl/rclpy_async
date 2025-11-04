@@ -40,7 +40,7 @@ async def main():
     rclpy.action.ActionServer(node, Fibonacci, "fibonacci", execute_callback)
 
     try:
-        async with rclpy_async.AsyncExecutor() as xctor:
+        async with rclpy_async.start_xtor() as xctor:
             xctor.add_node(node)
             print(help)
             await anyio.sleep_forever()

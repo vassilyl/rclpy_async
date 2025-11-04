@@ -49,7 +49,7 @@ async def main():
     request.linear = 2.0
     request.angular = 1.57
 
-    async with rclpy_async.AsyncExecutor() as xtor:
+    async with rclpy_async.start_xtor() as xtor:
         xtor.add_node(node)
         # wait for the next message to arrive
         before = await receive_stream.receive()

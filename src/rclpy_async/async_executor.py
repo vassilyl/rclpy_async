@@ -31,7 +31,6 @@ The class doesn't inherit from rclpy.executors.Executor, but should be able
 to handle standard nodes and awaitables.
 """
 
-import inspect
 import threading
 from contextlib import ExitStack, asynccontextmanager
 from threading import RLock
@@ -40,36 +39,34 @@ from typing import (
     Callable,
     List,
     Optional,
-    Set,
-    TYPE_CHECKING,
+    Set
 )
 
 import anyio
+import anyio.abc
 import anyio.from_thread
 
-import rclpy
-from rclpy.client import Client
 from rclpy.clock import Clock
 from rclpy.clock import ClockType
-from rclpy.context import Context
 from rclpy.exceptions import InvalidHandle
 from rclpy.executors import await_or_execute
 from rclpy.guard_condition import GuardCondition
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
-from rclpy.service import Service
 from rclpy.signals import SignalHandlerGuardCondition
-from rclpy.subscription import Subscription
-from rclpy.timer import Timer
 from rclpy.utilities import get_default_context
 from rclpy.utilities import timeout_sec_to_nsec
 from rclpy.waitable import NumberOfEntities, Waitable
 
-if TYPE_CHECKING:
-    from typing import Type
-    from rclpy.node import Node
+# type only imports
+from rclpy.context import Context
+from rclpy.timer import Timer
+from rclpy.subscription import Subscription
+from rclpy.client import Client
+from rclpy.service import Service
+from rclpy.node import Node
 
 
-class AsyncExecutor(anyio.AsyncContextManagerMixin):
+class AsyncExecutor():
     """
     Executor that runs callbacks in an anyio task group.
 
@@ -79,7 +76,12 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
     """
 
     def __init__(
-        self, *, context: Optional[Context] = None, wait_timeout_sec: float = 0.1
+        self,
+        *,
+        task_group: anyio.abc.TaskGroup,
+        blocking_portal: anyio.abc.BlockingPortal,
+        context: Optional[Context] = None,
+        wait_timeout_sec: float = 0.1,
     ) -> None:
         """
         Initialize the AsyncExecutor.
@@ -93,6 +95,8 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
                 "Install it with: pip install anyio"
             )
 
+        self._task_group = task_group
+        self._portal = blocking_portal
         self._context = get_default_context() if context is None else context
         self._nodes: Set["Node"] = set()
         self._nodes_lock = RLock()
@@ -135,7 +139,7 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
         with self._nodes_lock:
             if node not in self._nodes:
                 self._nodes.add(node)
-                node.executor = self
+                node.executor = self  # type: ignore  # duck typing compatibility
                 # Rebuild the wait set so it includes this new node
                 if self._guard:
                     self._guard.trigger()
@@ -370,7 +374,7 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
                         if self._can_execute(wt):
                             self._execute_waitable(wt)
 
-    def _can_execute(self, entity: "Entity") -> bool:
+    def _can_execute(self, entity) -> bool:
         """Check if an entity's callback can be executed."""
         return (
             not hasattr(entity, "_executor_event") or not entity._executor_event
@@ -538,21 +542,19 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
         """Helper to execute a function in the task group."""
         self._portal.start_task_soon(self._task_group.start_soon, coro, *args)
 
-    @asynccontextmanager
-    async def __asynccontextmanager__(self):
-        async with anyio.create_task_group() as tg:
-            self._task_group = tg
-            async with anyio.from_thread.BlockingPortal() as portal:
-                self._portal = portal
-                self._spin_thread = threading.Thread(
-                    target=self._spin_loop, daemon=True
-                )
-                self._spin_thread.start()
-                try:
-                    yield self
-                finally:
-                    self.shutdown()
 
-                    # Wait for spin thread to finish
-                    if self._spin_thread:
-                        self._spin_thread.join(timeout=1.0)
+@asynccontextmanager
+async def start_xtor(context: Optional[Context] = None, wait_timeout_sec: float = 0.1):
+    async with anyio.create_task_group() as tg:
+        async with anyio.from_thread.BlockingPortal() as portal:
+            xtor = AsyncExecutor(task_group=tg, blocking_portal=portal)
+            spin_thread = threading.Thread(target=xtor._spin_loop, daemon=True)
+            spin_thread.start()
+            try:
+                yield xtor
+            finally:
+                xtor.shutdown()
+
+                # Wait for spin thread to finish
+                if spin_thread:
+                    spin_thread.join(timeout=1.0)

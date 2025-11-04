@@ -26,7 +26,7 @@ async def main():
         handle_add_two_ints,
     )
     try:
-        async with rclpy_async.AsyncExecutor() as xtor:
+        async with rclpy_async.start_xtor() as xtor:
             xtor.add_node(node)
             print (help)
             await anyio.sleep_forever()
