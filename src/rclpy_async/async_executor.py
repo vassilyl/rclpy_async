@@ -546,12 +546,14 @@ class AsyncExecutor(anyio.AsyncContextManagerMixin):
                     target=self._spin_loop, daemon=True
                 )
                 self._spin_thread.start()
-                yield self
-                self.shutdown()
+                try:
+                    yield self
+                finally:
+                    self.shutdown()
 
-                # Wait for spin thread to finish
-                if self._spin_thread:
-                    self._spin_thread.join(timeout=1.0)
+                    # Wait for spin thread to finish
+                    if self._spin_thread:
+                        self._spin_thread.join(timeout=1.0)
 
     async def future_result(self, fut: rclpy.Future):
         """
