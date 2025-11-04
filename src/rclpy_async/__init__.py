@@ -1,46 +1,13 @@
-from typing import Callable
-import anyio
-import rclpy
-
 from rclpy_async.nodeasync import NodeAsync
 from rclpy_async.async_executor import start_xtor
-from rclpy_async.utilities import goal_status_str, goal_uuid_str
-
-
-async def future_result(fut: rclpy.Future):
-    """
-    Await a future and return its result.
-
-    :param fut: The future to await.
-    :return: The result of the future.
-    """
-    if not fut.done():
-        evt = anyio.Event()
-        fut.add_done_callback(lambda f: evt.set())
-        await evt.wait()
-    return fut.result()
-
-
-async def server_ready(
-    server_ready: Callable[[], bool],
-    server_wait_timeout: float = 5.0,
-    polling_interval: float = 0.1,
-) -> bool:
-    """
-    Wait for an action server to be available.
-
-    :param action_client: The action client to check.
-    :param server_wait_timeout: Time in seconds to wait for the server (default: 5.0).
-    :param polling_interval: Time in seconds between availability checks (default: 0.1).
-    :return: True if server is available, False if timeout.
-    """
-    ready = server_ready()
-    if not ready:
-        with anyio.move_on_after(server_wait_timeout):
-            while not ready:
-                await anyio.sleep(polling_interval)
-                ready = server_ready()
-    return ready
+from rclpy_async.service_client import service_client
+from rclpy_async.action_client import action_client
+from rclpy_async.utilities import (
+    goal_status_str,
+    goal_uuid_str,
+    server_ready,
+    future_result,
+)
 
 
 __all__ = [
@@ -49,5 +16,7 @@ __all__ = [
     "goal_status_str",
     "goal_uuid_str",
     "future_result",
-    "wait_for_action_server",
+    "server_ready",
+    "service_client",
+    "action_client",
 ]
