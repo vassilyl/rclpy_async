@@ -31,6 +31,7 @@ def send_no_wait_no_raise(msg):
 async def main():
     rclpy.init()
     node = rclpy.create_node("action_call_node")
+    logger = node.get_logger()
 
     # Create subscription
     node.create_subscription(
@@ -47,14 +48,17 @@ async def main():
         ) as rotate_absolute:
             # Get pose before rotation
             before = await receive_stream.receive()
-            print(f"Pose before: {before}")
+            logger.info(f"Pose before: {before}")
 
-            result = await rotate_absolute(RotateAbsolute.Goal(theta=2.0))
-            print(f"Rotation result: {result}")
+            result = await rotate_absolute(
+                RotateAbsolute.Goal(theta=2.0),
+                lambda msg: logger.info(f"Rotation feedback: {msg.feedback}"),  # type: ignore
+            )
+            logger.info(f"Rotation result: {result}")
 
             # Get pose after rotation
             after = await receive_stream.receive()
-            print(f"Pose after: {after}")
+            logger.info(f"Pose after: {after}")
 
 
 anyio.run(main)

@@ -2,6 +2,7 @@ import anyio
 from example_interfaces.action import Fibonacci
 
 import rclpy
+import rclpy.action
 import rclpy_async
 
 help = """
@@ -10,7 +11,6 @@ You can call it with
                   
     ros2 action send_goal /fibonacci example_interfaces/action/Fibonacci "order: 5"
 """
-
 
 async def main():
     rclpy.init()
@@ -37,14 +37,13 @@ async def main():
         result.sequence = feedback_msg.sequence
         return result
 
+    rclpy.action.ActionServer(node, Fibonacci, "fibonacci", execute_callback)
+
     try:
         async with rclpy_async.start_xtor() as xctor:
             xctor.add_node(node)
             print(help)
-            with rclpy_async.action_server(
-                node, Fibonacci, "fibonacci", execute_callback
-            ):
-                await anyio.sleep_forever()
+            await anyio.sleep_forever()
     except anyio.get_cancelled_exc_class():
         print("Ctrl+C detected, shutting down service...")
 

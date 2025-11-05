@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 import logging
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 import anyio
 
@@ -51,8 +51,8 @@ def action_client(
 
     async def _call(
         goal_msg: object,
-        feedback_task: Callable[[object], None]
-        | Callable[[object], Awaitable[None]]
+        feedback_task: Callable[[object], Any]
+        | Callable[[object], Awaitable[Any]]
         | None = None,
     ) -> tuple[int, object]:
         if not await server_ready(action_client.server_is_ready, server_wait_timeout):
