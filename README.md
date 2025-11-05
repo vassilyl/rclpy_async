@@ -1,116 +1,123 @@
 # rclpy_async
 
-Bridge core ROS 2 client library (rclpy) primitives into [structured concurrency](https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/)
-with [AnyIO](https://anyio.readthedocs.io/en/stable/index.html) (asyncio, Trio, Curio–style unified API). Write ROS 2 actions, services, and subscriptions using native `async/await` without spinning your own executor in the foreground.
+rclpy_async lets regular ROS 2 `rclpy` nodes cooperate with [AnyIO](https://anyio.readthedocs.io/en/stable/index.html) style structured concurrency. It spins the ROS wait-set in a background thread, forwards callbacks into an AnyIO task group, and offers helpers for building async service and action workflows without hand-written thread bridges.
 
-## Why
+## What’s Included
 
-`rclpy` provides asynchronous primitives but still requires managing an executor thread, callback groups, and thread ↔ event‑loop handoff. `rclpy_async` embeds a ROS 2 `SingleThreadedExecutor` in a background thread and exposes a small async façade (`NodeAsync`) that:
+- `start_executor()` — async context manager that wires a ROS-compatible wait loop into an AnyIO task group without relying on an `rclpy.executors.Executor`. Add your existing nodes and keep using their callbacks.
+- `service_client()` — context manager that yields an awaitable service call wrapper, complete with availability checks and timeout handling.
+- `action_client()` — helper that turns goal submission into a single awaitable, propagating AnyIO cancellation back to the ROS action server.
+- `action_server()` — wrap a standard `ActionServer`, translating ROS cancellation requests to AnyIO cancellation of the goal server callback.
+- Utilities such as `future_result()`, `server_ready()`, `goal_status_str()`, and `goal_uuid_str()` for common integration tasks.
 
-- Initializes / shuts down ROS 2 automatically
-- Translates ROS callbacks into AnyIO tasks
-- Provides context managers for subscriptions, services, and actions
-- Propagates structured cancellation (cancelling an AnyIO scope cancels an action goal)
-
-Works with AnyIO, so your code can run on the default asyncio backend (or Trio) without changes.
+Everything runs on AnyIO, so you can stick with asyncio (the default backend) or switch to Trio/Curio by changing only your runner.
 
 ## Installation
 
-Prerequisites: A working ROS 2 (e.g. Humble) environment (`rclpy` available in your Python). Then install:
+Prerequisites: a ROS 2 workspace with `rclpy` available (e.g. Humble). Then install from PyPI:
 
 ```bash
 pip install rclpy_async
 ```
 
-Or, from source (in this repo):
+Or install this repository in editable mode:
 
 ```bash
 pip install -e .
 ```
 
-## Quick Start Snippets (≤5 lines each)
+## Getting Started
 
-All snippets assume: `from rclpy_async import NodeAsync` and `import anyio` plus relevant message/action types.
-
-### Create a Node
 ```python
-async with NodeAsync("demo") as anode:
-		...
+import anyio
+import rclpy
+import turtlesim.srv
+
+import rclpy_async
+
+service_name = "/turtle1/teleport_relative"
+request = turtlesim.srv.TeleportRelative.Request(linear=2.0, angular=1.57)
+
+async def main():
+	rclpy.init()
+	node = rclpy.create_node("teleport_demo")
+	async with rclpy_async.start_executor() as executor:
+		executor.add_node(node)
+		with rclpy_async.service_client(
+			node, turtlesim.srv.TeleportRelative, service_name
+		) as teleport:
+			print(f"Teleport request: {request}")
+			response = await teleport(request)
+			print(f"Teleport response: {response}")
+
+
+anyio.run(main)
 ```
 
-### Subscription (receive one message)
-```python
-send, recv = anyio.create_memory_object_stream(0)
-with anode.subscription(Pose, "/turtle1/pose", send.send_nowait, qos_profile=0):
-	msg = await recv.receive()
-```
+Key points:
 
-See [`subscribe_next_update.py`](examples/subscribe_next_update.py) for a complete example.
+- `start_executor()` yields an `AsyncExecutor`. Add as many nodes as you like; they stay active until the context exits. The executor runs the ROS wait loop in its own thread.
+- `start_executor()` also creates an AnyIO task group. The executor schedules nodes callbacks in the task group, so you can safely `await` and use AnyIO primitives inside the callbacks.
+
+
+## Service and Action Helpers
 
 ### Service Client
+
 ```python
-async with anode.service_client(TeleportRelative, "/turtle1/teleport_relative") as call:
-	resp = await call(TeleportRelative.Request(linear=2.0, angular=1.57))
+with rclpy_async.service_client(node, ExampleSrv, "/example") as call:
+	reply = await call(ExampleSrv.Request())
 ```
-See [`service_call.py`](examples/service_call.py) for a complete example.
+
+The helper waits for the server, applies an AnyIO timeout, and cleans up the client automatically.
 
 ### Action Client
+
 ```python
-async with node.action_client(RotateAbsolute, "/turtle1/rotate_absolute") as send:
-	status, result = await send(RotateAbsolute.Goal(theta=3.14))
+with rclpy_async.action_client(node, ExampleAction, "/example") as send_goal:
+	status, result = await send_goal(ExampleAction.Goal())
 ```
 
-See [`action_call.py`](examples/action_call.py)
+Cancelling the surrounding AnyIO scope triggers `cancel_goal_async()` and re-raises the cancellation so your caller still sees the cancel.
 
-### Action With Feedback and Cancellation
+### Action Server
+
 ```python
-scope = anyio.CancelScope()
-
-async def fb(msg):
-	if abs(msg.feedback.remaining) < 1: scope.cancel()
-
-async with anode.action_client(
-	RotateAbsolute, "/turtle1/rotate_absolute", feedback_handler_async=fb
-) as send:
-	with scope: await send(RotateAbsolute.Goal(theta=2.0))
+with rclpy_async.action_server(
+	node,
+	ExampleAction,
+	"/example",
+	execute_callback=my_execute,
+):
+	await anyio.sleep_forever()
 ```
 
-See [`action_call_cancel.py`](examples/action_call_cancel.py) for a complete example.
+When `my_execute` runs under an AnyIO `CancelScope`, incoming client cancellation requests cancel the scope and let you tidy up before reporting the goal state.
+
+## Utilities
+
+These helpers smooth over common `rclpy` pain points when mixing with async code:
+
+- `future_result(future)` — await an `rclpy.Future` inside AnyIO code without blocking the event loop.
+- `server_ready(check_fn, timeout=5.0)` — poll for service/action availability.
+- `goal_status_str(status)` / `goal_uuid_str(uuid)` — render action status codes and goal IDs for logging.
 
 ## Examples
 
-See the `examples/` directory for complete flows:
+The `examples/` directory contains runnable scripts that mirror real ROS 2 workflows:
 
-- `turtlesim_sample.py` – mixed subscription, service, action (with feedback)
-- `action_call.py` – minimal RotateAbsolute action call
-- `action_call_cancel.py` – cancellation via feedback threshold
-- `subscribe_action_status.py` – subscribing to action status updates (QoS transient local)
-- `service_call.py` – simple service invocation
+- `service_call.py` — teleport a turtlesim turtle while consuming sensor updates.
+- `action_call.py` / `action_call_cancel.py` — send goals and react to cancellation.
+- `service_server.py` / `service_server_chain.py` — implement services with structured cancellation.
+- `subscribe_next_update.py` — bridge subscription callbacks into AnyIO streams.
 
-Run any example (requires running `turtlesim_node`):
+Run an example (with `ros2 run turtlesim turtlesim_node` in another terminal):
+
 ```bash
-ros2 run turtlesim turtlesim_node   # separate terminal
-python examples/action_call.py
+python examples/service_call.py
 ```
-
-Hint: to run turtlesim_node without GUI: `ros2 run turtlesim turtlesim_node --platform offscreen`
-
-## API Surface (Condensed)
-
-```python
-async with NodeAsync(name, *, args=None, namespace=None, domain_id=None)
-with node.subscription(msg_type, topic, callback, qos_profile)
-async with node.service_client(SrvType, name) -> async (request)->response
-async with node.action_client(ActionType, name, feedback_handler_async=None) -> async (goal)->(status,result)
-```
-
-All context managers are cancel‑aware and guarantee resource cleanup on exit.
-
-## Cancellation Semantics
-
-Cancelling a task awaiting an action goal triggers a best‑effort `cancel_goal_async()` and re‑raises the cancellation so outer scopes see normal cancellation behavior. Feedback handlers run in the AnyIO event loop thread via the portal.
 
 ## Contributing
 
-PRs welcome. Please ensure style is minimal and examples remain concise. See `LICENSE` for license terms and Code of Conduct below.
+PRs welcome! Please keep examples tight, add tests when possible, and follow the repository’s `LICENSE` and Code of Conduct.
 
