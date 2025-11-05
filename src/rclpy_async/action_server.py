@@ -38,11 +38,10 @@ def _wrap_execute_cancellable(
             cancel_scope = getattr(goal_handle, "_anyio_cancel_scope", None)
             if isinstance(cancel_scope, anyio.CancelScope):
                 with cancel_scope:
-                    try:
-                        return await callback(goal_handle)
-                    except anyio.get_cancelled_exc_class():
-                        goal_handle.canceled()
-                        return default_result
+                    return await callback(goal_handle)
+                if cancel_scope.cancelled_caught:
+                    goal_handle.canceled()
+                    return default_result
             else:
                 return await callback(goal_handle)
 
@@ -54,11 +53,10 @@ def _wrap_execute_cancellable(
             cancel_scope = getattr(goal_handle, "_anyio_cancel_scope", None)
             if isinstance(cancel_scope, anyio.CancelScope):
                 with cancel_scope:
-                    try:
-                        return callback(goal_handle)
-                    except anyio.get_cancelled_exc_class():
-                        goal_handle.canceled()
-                        return default_result
+                    return callback(goal_handle)
+                if cancel_scope.cancelled_caught:
+                    goal_handle.canceled()
+                    return default_result
             else:
                 return callback(goal_handle)
 
