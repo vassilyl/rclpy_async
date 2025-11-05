@@ -1,28 +1,36 @@
 import anyio
-from std_srvs.srv import SetBool
+import rclpy
+from example_interfaces.srv import AddTwoInts
 
 import rclpy_async
 
+help = """
+Service 'add_two_ints' of type 'example_interfaces/srv/AddTwoInts' is ready.
+You can call it with
 
-async def handle_set_bool(request, response):
-    print(f"Service received request with data: {request.data}")
-    response.success = True
-    response.message = "Completed successfully"
+    ros2 service call /add_two_ints example_interfaces/srv/AddTwoInts '{"a": 2, "b": 3}'
+"""
+
+async def handle_add_two_ints(request, response):
+    await anyio.sleep(1)  # simulate some work being done
+    response.sum = request.a + request.b
     return response
 
 
 async def main():
-    CancelError = anyio.get_cancelled_exc_class()
+    rclpy.init()
+    node = rclpy.create_node("add_two_ints_service_node")
+    node.create_service(
+        AddTwoInts,
+        "add_two_ints",
+        handle_add_two_ints,
+    )
     try:
-        async with rclpy_async.NodeAsync("set_bool_service_node") as anode:
-            with anode.service_server(SetBool, "set_bool", handle_set_bool):
-                print("Service '/set_bool' type 'std_srvs/srv/SetBool' is ready.")
-                print(
-                    "You can call it with "
-                    "'ros2 service call /set_bool std_srvs/srv/SetBool \"data: true\"'"
-                )
-                await anyio.sleep_forever()
-    except CancelError:
+        async with rclpy_async.start_xtor() as xtor:
+            xtor.add_node(node)
+            print (help)
+            await anyio.sleep_forever()
+    except anyio.get_cancelled_exc_class():
         print("Ctrl+C detected, shutting down service...")
 
 

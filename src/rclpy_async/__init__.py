@@ -1,4 +1,3 @@
-from rclpy_async.nodeasync import NodeAsync
 from rclpy_async.async_executor import start_xtor
 from rclpy_async.service_client import service_client
 from rclpy_async.action_client import action_client
@@ -12,7 +11,6 @@ from rclpy_async.utilities import (
 
 
 __all__ = [
-    "NodeAsync",
     "start_xtor",
     "goal_status_str",
     "goal_uuid_str",
