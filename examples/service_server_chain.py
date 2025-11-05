@@ -7,7 +7,7 @@ import rclpy_async
 
 
 async def start_inner_service(*, task_status=anyio.TASK_STATUS_IGNORED):
-    async with rclpy_async.start_xtor() as xtor:
+    async with rclpy_async.start_executor() as xtor:
         node = rclpy.create_node("add_two_ints_service_node")
         logger = node.get_logger()
 
@@ -24,7 +24,7 @@ async def start_inner_service(*, task_status=anyio.TASK_STATUS_IGNORED):
 
 
 async def start_outer_service(*, task_status=anyio.TASK_STATUS_IGNORED):
-    async with rclpy_async.start_xtor() as xtor:
+    async with rclpy_async.start_executor() as xtor:
         reentrant = rclpy.callback_groups.ReentrantCallbackGroup()
         node = rclpy.create_node("add_twice_service_node")
         logger = node.get_logger()
@@ -63,7 +63,7 @@ async def main():
         await tg.start(start_inner_service)
         await tg.start(start_outer_service)
 
-        async with rclpy_async.start_xtor() as xtor:
+        async with rclpy_async.start_executor() as xtor:
             node_client = rclpy.create_node("add_twice_client")
             client_outer = node_client.create_client(AddTwoInts, "add_twice")
             xtor.add_node(node_client)

@@ -38,7 +38,7 @@ async def main():
         return result
 
     try:
-        async with rclpy_async.start_xtor() as xctor:
+        async with rclpy_async.start_executor() as xctor:
             xctor.add_node(node)
             print(help)
             with rclpy_async.action_server(

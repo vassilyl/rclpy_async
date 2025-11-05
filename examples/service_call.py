@@ -45,7 +45,7 @@ async def main():
     request.linear = 2.0
     request.angular = 1.57
 
-    async with rclpy_async.start_xtor() as xtor:
+    async with rclpy_async.start_executor() as xtor:
         xtor.add_node(node)
         with rclpy_async.service_client(
             node,

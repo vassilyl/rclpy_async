@@ -41,7 +41,7 @@ async def main():
         qos_profile=0,  # does not queue messages in middleware queue
     )
 
-    async with rclpy_async.start_xtor() as xtor:
+    async with rclpy_async.start_executor() as xtor:
         xtor.add_node(node)
         with rclpy_async.action_client(
             node, RotateAbsolute, "/turtle1/rotate_absolute"

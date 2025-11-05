@@ -21,7 +21,7 @@ async def main():
     node = rclpy.create_node("action_cancel_node")
     logger = node.get_logger()
 
-    async with rclpy_async.start_xtor() as xtor:
+    async with rclpy_async.start_executor() as xtor:
         xtor.add_node(node)
         # First, rotate to 0 radians to have a known starting orientation
         with rclpy_async.action_client(

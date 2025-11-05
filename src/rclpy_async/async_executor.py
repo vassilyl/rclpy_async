@@ -544,7 +544,7 @@ class AsyncExecutor():
 
 
 @asynccontextmanager
-async def start_xtor(context: Optional[Context] = None, wait_timeout_sec: float = 0.1):
+async def start_executor(context: Optional[Context] = None, wait_timeout_sec: float = 0.1):
     async with anyio.create_task_group() as tg:
         async with anyio.from_thread.BlockingPortal() as portal:
             xtor = AsyncExecutor(task_group=tg, blocking_portal=portal)
