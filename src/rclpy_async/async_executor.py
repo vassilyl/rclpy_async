@@ -1,34 +1,11 @@
 """
-AsyncExecutor class is a re-implementation of executors.SingleThreadedExecutor
-with the intention of running all async callbacks in an anyio task group.
+ROS 2 executor integration for AnyIO-based applications.
 
-Instead of traditional boilerplate:
-
-   ctx = rclpy.Context()
-   rclpy.init(context=ctx)
-   node = rclpy.create_node('my_node', context=ctx)
-   # ... add node servers, clients, subscribers etc.
-   executor = rclpy.executors.SingleThreadedExecutor()
-   executor.add_node(node)
-   executor.spin()
-   rclpy.shutdown(context=ctx)
-
-With the AsyncExecutor, the equivalent code becomes:
-
-   ctx = rclpy.Context()
-   rclpy.init(context=ctx)
-   node = rclpy.create_node('my_node', context=ctx)
-   # ... add node servers, clients, subscribers etc.
-   async with AsyncExecutor() as executor:
-       executor.add_node(node)
-       await anyio.sleep_forever()
-
-On entering the async context, AsyncExecutor creates anyio task group
-and spawns its own implementation of wait spinning loop in a worker thread.
-The loop just dispatches all callbacks to the task group for execution.
-
-The class doesn't inherit from rclpy.executors.Executor, but should be able
-to handle standard nodes and awaitables.
+``start_executor`` exposes an async context manager that spins the ROS wait set in
+its own thread and dispatches work into the provided AnyIO task group. The
+``AsyncExecutor`` class encapsulates the wait-loop machinery and can be reused in
+custom integrations when an application wants to supply its own task group and
+BlockingPortal instances.
 """
 
 import threading
@@ -66,14 +43,8 @@ from rclpy.service import Service
 from rclpy.node import Node
 
 
-class AsyncExecutor():
-    """
-    Executor that runs callbacks in an anyio task group.
-
-    This executor re-implements SingleThreadedExecutor to work with async/await
-    patterns using anyio. It runs a wait loop in a background thread and dispatches
-    all callbacks to an anyio task group for execution.
-    """
+class AsyncExecutor:
+    """Dispatch ROS callbacks into an AnyIO task group using a custom wait loop."""
 
     def __init__(
         self,
@@ -84,10 +55,19 @@ class AsyncExecutor():
         wait_timeout_sec: float = 0.1,
     ) -> None:
         """
-        Initialize the AsyncExecutor.
+        Initialize an executor that cooperates with a supplied AnyIO task group.
 
-        :param context: The context to be associated with, or None for the default context.
-        :param wait_timeout_sec: Timeout for wait loop iterations in seconds (default: 0.1).
+        Parameters
+        ----------
+        task_group : anyio.abc.TaskGroup
+            Task group used to schedule all ROS callbacks.
+        blocking_portal : anyio.abc.BlockingPortal
+            Portal that lets the background wait loop submit work into ``task_group``.
+        context : Context, optional
+            ROS 2 context to associate with the executor. Defaults to
+            ``rclpy.utilities.get_default_context()`` when omitted.
+        wait_timeout_sec : float, optional
+            Timeout for each wait-set spin iteration in seconds (default: 0.1).
         """
         if anyio is None:
             raise ImportError(
@@ -545,6 +525,21 @@ class AsyncExecutor():
 
 @asynccontextmanager
 async def start_executor(context: Optional[Context] = None, wait_timeout_sec: float = 0.1):
+    """Spin an ``AsyncExecutor`` and yield it within an AnyIO-friendly context.
+
+    Parameters
+    ----------
+    context : Context, optional
+        ROS 2 context to associate with the executor. Uses the default context when
+        omitted.
+    wait_timeout_sec : float, optional
+        Timeout for each wait-set iteration in seconds (default: 0.1).
+
+    Yields
+    ------
+    AsyncExecutor
+        Executor instance bound to the lifetime of the surrounding context manager.
+    """
     async with anyio.create_task_group() as tg:
         async with anyio.from_thread.BlockingPortal() as portal:
             xtor = AsyncExecutor(task_group=tg, blocking_portal=portal)

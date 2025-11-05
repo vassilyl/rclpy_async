@@ -1,6 +1,8 @@
 """
 ROS 2 Async Subscription Example - Next Message
 
+Consume ROS2 subscription as an AnyIO object stream.
+
 This script demonstrates how to use rclpy_async to create an asynchronous ROS 2 node
 that subscribes to turtle pose messages from the turtlesim package. The subscription
 awaits the next available message from the '/turtle1/pose' topic and prints it.
@@ -14,7 +16,7 @@ Key features:
 Usage:
     Run `python examples/subscribe_next_update.py`
 
-Note: Requires turtlesim to be running for messages to be available.
+Note: Requires running turtlesim which publishes messages to the topic.
 """
 
 import anyio
