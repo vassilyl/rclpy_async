@@ -187,13 +187,13 @@ class AsyncExecutor:
 
         for node in nodes_to_use:
             subscriptions.extend(
-                filter(lambda e: self._can_execute(e), node.subscriptions)
+                filter(self._can_execute, node.subscriptions)
             )
-            timers.extend(filter(lambda e: self._can_execute(e), node.timers))
-            clients.extend(filter(lambda e: self._can_execute(e), node.clients))
-            services.extend(filter(lambda e: self._can_execute(e), node.services))
-            node_guards = filter(lambda e: self._can_execute(e), node.guards)
-            waitables.extend(filter(lambda e: self._can_execute(e), node.waitables))
+            timers.extend(filter(self._can_execute, node.timers))
+            clients.extend(filter(self._can_execute, node.clients))
+            services.extend(filter(self._can_execute, node.services))
+            node_guards = filter(self._can_execute, node.guards)
+            waitables.extend(filter(self._can_execute, node.waitables))
             # Retrigger guard conditions that were triggered but not handled
             for gc in node_guards:
                 if gc._executor_triggered:
