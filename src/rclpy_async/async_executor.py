@@ -534,7 +534,7 @@ async def start_executor(
     """
     async with anyio.create_task_group() as tg:
         async with anyio.from_thread.BlockingPortal() as portal:
-            xtor = AsyncExecutor(task_group=tg, blocking_portal=portal)
+            xtor = AsyncExecutor(task_group=tg, blocking_portal=portal, context=context)
             spin_thread = threading.Thread(target=xtor._spin_loop, daemon=True)
             spin_thread.start()
             try:
