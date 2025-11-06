@@ -395,6 +395,7 @@ class AsyncExecutor:
 
                 self._execute_in_task_group(_execute, msg)
         except InvalidHandle:
+            # The subscription handle is invalid (e.g., subscription destroyed); nothing to do.
             pass
 
     def _execute_guard_condition(self, gc: GuardCondition) -> None:
