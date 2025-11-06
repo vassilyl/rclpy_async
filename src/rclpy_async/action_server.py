@@ -31,40 +31,22 @@ def _cancel_goal_cancellable(goal_handle: GoalHandle):
 
 
 def _wrap_execute_cancellable(
-    callback: Callable[[GoalHandle], Awaitable[object]]
-    | Callable[[GoalHandle], object],
+    callback: Callable[[GoalHandle], Awaitable[object]],
     default_result: object,
 ):
-    if inspect.iscoroutinefunction(callback):
-
-        async def _execute_async_cancellable(goal_handle: GoalHandle):
-            """Execute goal with cancellation support."""
-            cancel_scope = getattr(goal_handle, "_anyio_cancel_scope", None)
-            if isinstance(cancel_scope, anyio.CancelScope):
-                with cancel_scope:
-                    return await callback(goal_handle)
-                if cancel_scope.cancelled_caught:
-                    goal_handle.canceled()
-                    return default_result
-            else:
+    async def _execute_async_cancellable(goal_handle: GoalHandle):
+        """Execute goal with cancellation support."""
+        cancel_scope = getattr(goal_handle, "_anyio_cancel_scope", None)
+        if isinstance(cancel_scope, anyio.CancelScope):
+            with cancel_scope:
                 return await callback(goal_handle)
+            if cancel_scope.cancelled_caught:
+                goal_handle.canceled()
+                return default_result
+        else:
+            return await callback(goal_handle)
 
-        return _execute_async_cancellable
-    else:
-
-        def _execute_sync_cancellable(goal_handle: GoalHandle):
-            """Execute goal with cancellation support."""
-            cancel_scope = getattr(goal_handle, "_anyio_cancel_scope", None)
-            if isinstance(cancel_scope, anyio.CancelScope):
-                with cancel_scope:
-                    return callback(goal_handle)
-                if cancel_scope.cancelled_caught:
-                    goal_handle.canceled()
-                    return default_result
-            else:
-                return callback(goal_handle)
-
-        return _execute_sync_cancellable
+    return _execute_async_cancellable
 
 
 @contextmanager
@@ -148,7 +130,7 @@ def action_server(
             status_pub_qos_profile=status_pub_qos_profile,
             result_timeout=result_timeout,
         )
-        if accept_cancellations
+        if accept_cancellations and inspect.iscoroutinefunction(execute_callback)
         else ActionServer(
             node,
             action_type,
