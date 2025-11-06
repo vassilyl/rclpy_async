@@ -371,6 +371,7 @@ class AsyncExecutor:
 
                     self._execute_in_task_group(_execute)
         except InvalidHandle:
+            # The handle is invalid (e.g., destroyed); nothing to do.
             pass
 
     def _execute_subscription(self, sub: Subscription) -> None:
@@ -395,7 +396,7 @@ class AsyncExecutor:
 
                 self._execute_in_task_group(_execute, msg)
         except InvalidHandle:
-            # The subscription handle is invalid (e.g., subscription destroyed); nothing to do.
+            # The handle is invalid (e.g., destroyed); nothing to do.
             pass
 
     def _execute_guard_condition(self, gc: GuardCondition) -> None:
@@ -445,6 +446,7 @@ class AsyncExecutor:
 
             self._execute_in_task_group(_execute)
         except InvalidHandle:
+            # The handle is invalid (e.g., destroyed); nothing to do.
             pass
 
     def _execute_service(self, srv: Service) -> None:
@@ -476,6 +478,7 @@ class AsyncExecutor:
 
             self._execute_in_task_group(_execute)
         except InvalidHandle:
+            # The handle is invalid (e.g., destroyed); nothing to do.
             pass
 
     def _execute_waitable(self, waitable: Waitable) -> None:
