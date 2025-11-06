@@ -42,7 +42,11 @@ async def main():
             xctor.add_node(node)
             print(help)
             with rclpy_async.action_server(
-                node, Fibonacci, "fibonacci", execute_callback
+                node,
+                Fibonacci,
+                "fibonacci",
+                execute_callback,
+                goal_callback=lambda request: request.order != 4,  # type: ignore
             ):
                 await anyio.sleep_forever()
     except anyio.get_cancelled_exc_class():

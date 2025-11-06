@@ -5,7 +5,7 @@ import anyio
 from rclpy.action import ActionServer
 import rclpy.action.server
 from rclpy.action.server import ServerGoalHandle as GoalHandle
-from rclpy.action.server import CancelResponse
+from rclpy.action.server import CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 
 
@@ -13,6 +13,7 @@ import rclpy
 import rclpy.node
 
 reentrant_callback_group = ReentrantCallbackGroup()
+
 
 def _handle_accepted_cancellable(goal_handle: GoalHandle):
     """Handle goal acceptance with cancellation support."""
@@ -32,7 +33,7 @@ def _cancel_goal_cancellable(goal_handle: GoalHandle):
 def _wrap_execute_cancellable(
     callback: Callable[[GoalHandle], Awaitable[object]]
     | Callable[[GoalHandle], object],
-    default_result: object
+    default_result: object,
 ):
     if inspect.iscoroutinefunction(callback):
 
@@ -123,6 +124,13 @@ def action_server(
     ContextManager
         A context manager that destroys the action server on exit.
     """
+    wrapped_goal_callback = (
+        None
+        if goal_callback is None
+        else lambda goal_msg: GoalResponse.ACCEPT
+        if goal_callback(goal_msg)
+        else GoalResponse.REJECT
+    )
     action_server = (
         ActionServer(
             node,
@@ -130,7 +138,7 @@ def action_server(
             action_name,
             _wrap_execute_cancellable(execute_callback, action_type.Result()),
             callback_group=callback_group,
-            goal_callback=goal_callback,
+            goal_callback=wrapped_goal_callback,
             handle_accepted_callback=_handle_accepted_cancellable,
             cancel_callback=_cancel_goal_cancellable,
             goal_service_qos_profile=goal_service_qos_profile,
@@ -147,7 +155,7 @@ def action_server(
             action_name,
             execute_callback,
             callback_group=callback_group,
-            goal_callback=goal_callback,
+            goal_callback=wrapped_goal_callback,
             goal_service_qos_profile=goal_service_qos_profile,
             result_service_qos_profile=result_service_qos_profile,
             cancel_service_qos_profile=cancel_service_qos_profile,
