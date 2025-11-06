@@ -1,10 +1,13 @@
 from contextlib import contextmanager
 
 import anyio
-
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import qos_profile_services_default
-from rclpy_async.utilities import server_ready, future_result
+
+from rclpy_async.utilities import future_result, server_ready
+
+reentrant_callback_group = ReentrantCallbackGroup()
 
 
 @contextmanager
@@ -14,6 +17,7 @@ def service_client(
     srv_name: str,
     *,
     qos_profile=qos_profile_services_default,
+    callback_group=reentrant_callback_group,
     server_wait_timeout: float = 5.0,
 ):
     """Context manager yielding an async callable for a ROS 2 service client.
@@ -38,7 +42,9 @@ def service_client(
         ``TimeoutError``.
     """
 
-    client = node.create_client(srv_type, srv_name, qos_profile=qos_profile)
+    client = node.create_client(
+        srv_type, srv_name, qos_profile=qos_profile, callback_group=callback_group
+    )
 
     async def _call(request):
         if not await server_ready(client.service_is_ready, server_wait_timeout):

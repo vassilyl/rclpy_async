@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import anyio
 
@@ -19,35 +19,40 @@ def action_client(
     *,
     server_wait_timeout: float = 5.0,
 ):
-    """Context manager yielding an awaitable ROS action client call helper.
+    """Async context manager for a ROS action client.
 
-    While inside the context, the returned coroutine submits a goal, waits for the
-    result, and returns ``(status, result)``. Cancelling the surrounding AnyIO
-    cancellation scope propagates cancellation to the action server.
+    Yields an async callable that sends a goal to the action server,
+    waits for the action result, and returns a tuple of (status, result).
+    The function also translates cancel scope cancellation to
+    ROS action goal cancellation.
+
+    By default exceptions in ``feedback_task`` are suppressed. Set
+    ``propagate_feedback_exceptions=True`` to propagate exceptions
+    to the caller's scope.
 
     Parameters
     ----------
-    node : Node
-        Node used to create the action client.
     action_type : type
-        ROS action type (for example ``example_interfaces.action.Fibonacci``).
+        The ROS action type class (e.g., example_interfaces.action.Fibonacci).
     action_name : str
-        Fully qualified action name.
+        The name of the ROS action to call (e.g., "/fibonacci").
+    feedback_task : Callable[[object], None] or Callable[[object], Awaitable[None]], optional
+        An async function to handle feedback messages, by default None.
     server_wait_timeout : float, optional
-        Seconds to wait for the action server to become available (default: 5.0).
+        Time in seconds to wait for the action server to be available, by default 5 seconds.
 
-    Yields
-    ------
-    Callable[[object, Callable[[object], Any] | Callable[[object], Awaitable[Any]] | None], Awaitable[tuple[int, object]]]
-        Coroutine function that sends goals to the action server.
+    Returns
+    -------
+    AsyncContextManager
+        An async context manager that yields a function to send goals to the action server.
     """
     logger = node.get_logger()
     action_client = rclpy.action.ActionClient(node, action_type, action_name)
 
     async def _call(
         goal_msg: object,
-        feedback_task: Callable[[object], Any]
-        | Callable[[object], Awaitable[Any]]
+        feedback_task: Callable[[object], None]
+        | Callable[[object], Awaitable[None]]
         | None = None,
     ) -> tuple[int, object]:
         if not await server_ready(action_client.server_is_ready, server_wait_timeout):

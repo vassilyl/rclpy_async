@@ -6,10 +6,13 @@ from rclpy.action import ActionServer
 import rclpy.action.server
 from rclpy.action.server import ServerGoalHandle as GoalHandle
 from rclpy.action.server import CancelResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+
 
 import rclpy
 import rclpy.node
 
+reentrant_callback_group = ReentrantCallbackGroup()
 
 def _handle_accepted_cancellable(goal_handle: GoalHandle):
     """Handle goal acceptance with cancellation support."""
@@ -71,6 +74,7 @@ def action_server(
     execute_callback: Callable[[GoalHandle], Awaitable[object]]
     | Callable[[GoalHandle], object],
     *,
+    callback_group=reentrant_callback_group,
     goal_callback: Optional[
         Callable[[object], Awaitable[bool]] | Callable[[object], bool]
     ] = None,
@@ -125,6 +129,7 @@ def action_server(
             action_type,
             action_name,
             _wrap_execute_cancellable(execute_callback, action_type.Result()),
+            callback_group=callback_group,
             goal_callback=goal_callback,
             handle_accepted_callback=_handle_accepted_cancellable,
             cancel_callback=_cancel_goal_cancellable,
@@ -141,6 +146,7 @@ def action_server(
             action_type,
             action_name,
             execute_callback,
+            callback_group=callback_group,
             goal_callback=goal_callback,
             goal_service_qos_profile=goal_service_qos_profile,
             result_service_qos_profile=result_service_qos_profile,

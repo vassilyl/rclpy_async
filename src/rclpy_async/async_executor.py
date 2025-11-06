@@ -11,36 +11,26 @@ BlockingPortal instances.
 import threading
 from contextlib import ExitStack, asynccontextmanager
 from threading import RLock
-from typing import (
-    Awaitable,
-    Callable,
-    List,
-    Optional,
-    Set
-)
+from typing import Awaitable, Callable, List, Optional, Set
 
 import anyio
 import anyio.abc
 import anyio.from_thread
+from rclpy.client import Client
+from rclpy.clock import Clock, ClockType
 
-from rclpy.clock import Clock
-from rclpy.clock import ClockType
+from rclpy.context import Context
 from rclpy.exceptions import InvalidHandle
 from rclpy.executors import await_or_execute
 from rclpy.guard_condition import GuardCondition
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
-from rclpy.signals import SignalHandlerGuardCondition
-from rclpy.utilities import get_default_context
-from rclpy.utilities import timeout_sec_to_nsec
-from rclpy.waitable import NumberOfEntities, Waitable
-
-# type only imports
-from rclpy.context import Context
-from rclpy.timer import Timer
-from rclpy.subscription import Subscription
-from rclpy.client import Client
-from rclpy.service import Service
 from rclpy.node import Node
+from rclpy.service import Service
+from rclpy.signals import SignalHandlerGuardCondition
+from rclpy.subscription import Subscription
+from rclpy.timer import Timer
+from rclpy.utilities import get_default_context, timeout_sec_to_nsec
+from rclpy.waitable import NumberOfEntities, Waitable
 
 
 class AsyncExecutor:
@@ -524,7 +514,9 @@ class AsyncExecutor:
 
 
 @asynccontextmanager
-async def start_executor(context: Optional[Context] = None, wait_timeout_sec: float = 0.1):
+async def start_executor(
+    context: Optional[Context] = None, wait_timeout_sec: float = 0.1
+):
     """Spin an ``AsyncExecutor`` and yield it within an AnyIO-friendly context.
 
     Parameters

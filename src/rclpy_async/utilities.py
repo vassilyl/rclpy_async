@@ -1,7 +1,6 @@
-import anyio
-
 from typing import Callable
 
+import anyio
 import rclpy
 from action_msgs.msg import GoalStatus
 
@@ -37,12 +36,7 @@ async def server_ready(
 
 
 async def future_result(fut: rclpy.Future):
-    """
-    Await a future and return its result.
-
-    :param fut: The future to await.
-    :return: The result of the future.
-    """
+    """Await a future and return its result."""
     if not fut.done():
         evt = anyio.Event()
         fut.add_done_callback(lambda f: evt.set())

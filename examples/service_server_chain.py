@@ -24,7 +24,7 @@ async def start_inner_service(*, task_status=anyio.TASK_STATUS_IGNORED):
 
 
 async def start_outer_service(*, task_status=anyio.TASK_STATUS_IGNORED):
-    async with rclpy_async.start_executor() as xtor:
+    async with rclpy_async.start_executor() as executor:
         reentrant = rclpy.callback_groups.ReentrantCallbackGroup()
         node = rclpy.create_node("add_twice_service_node")
         logger = node.get_logger()
@@ -51,7 +51,7 @@ async def start_outer_service(*, task_status=anyio.TASK_STATUS_IGNORED):
         node.create_service(
             AddTwoInts, "add_twice", handle_add_twice, callback_group=reentrant
         )
-        xtor.add_node(node)
+        executor.add_node(node)
         task_status.started()
         await anyio.sleep_forever()
 
