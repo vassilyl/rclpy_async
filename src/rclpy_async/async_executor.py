@@ -186,9 +186,7 @@ class AsyncExecutor:
         waitables: List[Waitable] = []
 
         for node in nodes_to_use:
-            subscriptions.extend(
-                filter(self._can_execute, node.subscriptions)
-            )
+            subscriptions.extend(filter(self._can_execute, node.subscriptions))
             timers.extend(filter(self._can_execute, node.timers))
             clients.extend(filter(self._can_execute, node.clients))
             services.extend(filter(self._can_execute, node.services))
