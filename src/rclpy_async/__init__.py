@@ -1,3 +1,5 @@
+from importlib.metadata import version
+
 from rclpy_async.action_client import action_client
 from rclpy_async.action_server import action_server
 from rclpy_async.async_executor import start_executor
@@ -9,6 +11,7 @@ from rclpy_async.utilities import (
     server_ready,
 )
 
+__version__ = version("rclpy_async")
 __all__ = [
     "start_executor",
     "goal_status_str",
