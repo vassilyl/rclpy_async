@@ -129,7 +129,4 @@ def action_client(
     try:
         yield _call
     finally:
-        try:
-            action_client.destroy()
-        except Exception:
-            pass
+        action_client.destroy()
