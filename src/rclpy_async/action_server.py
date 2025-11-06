@@ -69,42 +69,52 @@ def action_server(
     status_pub_qos_profile=rclpy.action.server.qos_profile_action_status_default,
     result_timeout=900,
 ):
-    """
-    Create a context manager to create a ROS action server.
+    """Yield a cancellable ROS 2 action server bound to the given node.
 
-    While in the context, each goal request starts an ``execute_callback``
-    in the AnyIO event loop. Exiting the context destroys the action server
-    and stops processing of incoming goals.
+    While inside the context, each goal request invokes ``execute_callback``.
+    Exiting the context destroys the server and stops processing new goals.
 
     Parameters
     ----------
+    node : rclpy.node.Node
+        Node used to construct the underlying :class:`rclpy.action.ActionServer`.
     action_type : type
-        The ROS action type class (e.g., example_interfaces.action.Fibonacci).
+        ROS action type (for example ``example_interfaces.action.Fibonacci``).
     action_name : str
-        The name of the ROS action to create (e.g., "/fibonacci").
-    execute_callback : Callable[[object], Awaitable[object]] or Callable[[object], object]
-        An async function to call with each incoming goal.
-    goal_callback : Callable[[object], Awaitable[bool]] or Callable[[object], bool], optional
-        An optional async function to call to accept/reject incoming goals.
+        Fully qualified name of the action to expose.
+    execute_callback : Callable[[GoalHandle], Awaitable[object]] | Callable[[GoalHandle], object]
+        Function executed for each accepted goal. If ``accept_cancellations`` is
+        ``True`` and the callback is async, cancellation from clients is
+        propagated into the AnyIO cancel scope.
+    callback_group : CallbackGroup, optional
+        Callback group used by the action server. Defaults to a shared
+        :class:`ReentrantCallbackGroup`.
+    goal_callback : Callable[[object], Awaitable[bool]] | Callable[[object], bool], optional
+        Predicate that approves or rejects incoming goals before execution.
     accept_cancellations : bool, optional
-        Whether to accept cancellation requests from clients, by default True.
+        Whether client cancellation requests should propagate to the execute
+        callback. Defaults to ``True``.
     goal_service_qos_profile : QoSProfile, optional
-        The QoS profile to use for the goal service, by default qos_profile_services_default.
+        QoS profile applied to the goal service (default:
+        ``qos_profile_services_default``).
     result_service_qos_profile : QoSProfile, optional
-        The QoS profile to use for the result service, by default qos_profile_services_default.
+        QoS profile applied to the result service (default:
+        ``qos_profile_services_default``).
     cancel_service_qos_profile : QoSProfile, optional
-        The QoS profile to use for the cancel service, by default qos_profile_services_default.
+        QoS profile applied to the cancel service (default:
+        ``qos_profile_services_default``).
     feedback_pub_qos_profile : QoSProfile, optional
-        The QoS profile to use for the feedback publisher, by default a depth 10 profile.
+        QoS profile for the feedback publisher (default: depth-10 profile).
     status_pub_qos_profile : QoSProfile, optional
-        The QoS profile to use for the status publisher, by default qos_profile_action_status_default.
+        QoS profile for the status publisher (default:
+        ``qos_profile_action_status_default``).
     result_timeout : int, optional
-        How long in seconds a result is kept by the server after a goal
-        reaches a terminal state.
-    Returns
-    -------
-    ContextManager
-        A context manager that destroys the action server on exit.
+        Seconds to retain results after reaching a terminal state (default: 900).
+
+    Yields
+    ------
+    ActionServer
+        The instantiated action server. It is destroyed automatically on exit.
     """
     wrapped_goal_callback = (
         None
