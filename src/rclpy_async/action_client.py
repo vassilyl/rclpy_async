@@ -19,32 +19,38 @@ def action_client(
     *,
     server_wait_timeout: float = 5.0,
 ):
-    """Async context manager for a ROS action client.
+    """Yield a coroutine helper for interacting with a ROS 2 action server.
 
-    Yields an async callable that sends a goal to the action server,
-    waits for the action result, and returns a tuple of (status, result).
-    The function also translates cancel scope cancellation to
-    ROS action goal cancellation.
-
-    By default exceptions in ``feedback_task`` are suppressed. Set
-    ``propagate_feedback_exceptions=True`` to propagate exceptions
-    to the caller's scope.
+    The yielded coroutine submits a goal to ``action_name``, waits for the final
+    result, and returns ``(status, result)``. Cancelling the surrounding AnyIO
+    scope requests goal cancellation on the server before re-raising the
+    cancellation.
 
     Parameters
     ----------
+    node : Node
+        Node used to construct the underlying :class:`rclpy.action.ActionClient`.
     action_type : type
-        The ROS action type class (e.g., example_interfaces.action.Fibonacci).
+        ROS action type (for example ``example_interfaces.action.Fibonacci``).
     action_name : str
-        The name of the ROS action to call (e.g., "/fibonacci").
-    feedback_task : Callable[[object], None] or Callable[[object], Awaitable[None]], optional
-        An async function to handle feedback messages, by default None.
+        Fully qualified name of the action to call.
     server_wait_timeout : float, optional
-        Time in seconds to wait for the action server to be available, by default 5 seconds.
+        Seconds to wait for the action server to become available (default: 5.0).
 
-    Returns
-    -------
-    AsyncContextManager
-        An async context manager that yields a function to send goals to the action server.
+    Yields
+    ------
+    Callable[[object, Callable[[object], None] | Callable[[object], Awaitable[None]] | None],
+              Awaitable[tuple[int, object]]]
+        Coroutine that sends a goal, optionally processes feedback, and resolves
+        with the goal status and result object.
+
+    Raises
+    ------
+    TimeoutError
+        If the action server does not report ready within ``server_wait_timeout``
+        seconds.
+    RuntimeError
+        If the goal handle is not received in time or the server rejects the goal.
     """
     logger = node.get_logger()
     action_client = rclpy.action.ActionClient(node, action_type, action_name)
