@@ -28,7 +28,7 @@ async def main():
     try:
         async with rclpy_async.start_executor() as xtor:
             xtor.add_node(node)
-            print (help)
+            print(help)
             await anyio.sleep_forever()
     except anyio.get_cancelled_exc_class():
         print("Ctrl+C detected, shutting down service...")
