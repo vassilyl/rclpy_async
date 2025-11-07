@@ -40,9 +40,9 @@ def _wrap_execute_cancellable(
         if isinstance(cancel_scope, anyio.CancelScope):
             with cancel_scope:
                 return await callback(goal_handle)
-            if cancel_scope.cancelled_caught:
-                goal_handle.canceled()
-                return default_result
+            # if cancel_scope was cancelled
+            goal_handle.canceled()
+            return default_result
         else:
             return await callback(goal_handle)
 
@@ -92,8 +92,12 @@ def action_server(
     goal_callback : Callable[[object], Awaitable[bool]] | Callable[[object], bool], optional
         Predicate that approves or rejects incoming goals before execution.
     accept_cancellations : bool, optional
-        Whether client cancellation requests should propagate to the execute
-        callback. Defaults to ``True``.
+        Whether to accept client cancellation requests.
+        If ``True``, cancellation requests will propagate to the execute
+        callback. For async execute callbacks, cancellation requests will also
+        cancel the AnyIO cancel scope.
+        If ``False``, all cancellation requests are rejected.
+        Defaults to ``True``.
     goal_service_qos_profile : QoSProfile, optional
         QoS profile applied to the goal service (default:
         ``qos_profile_services_default``).
@@ -123,39 +127,30 @@ def action_server(
         if goal_callback(goal_msg)
         else GoalResponse.REJECT
     )
-    action_server = (
-        ActionServer(
-            node,
-            action_type,
-            action_name,
-            _wrap_execute_cancellable(execute_callback, action_type.Result()),
-            callback_group=callback_group,
-            goal_callback=wrapped_goal_callback,
-            handle_accepted_callback=_handle_accepted_cancellable,
-            cancel_callback=_cancel_goal_cancellable,
-            goal_service_qos_profile=goal_service_qos_profile,
-            result_service_qos_profile=result_service_qos_profile,
-            cancel_service_qos_profile=cancel_service_qos_profile,
-            feedback_pub_qos_profile=feedback_pub_qos_profile,
-            status_pub_qos_profile=status_pub_qos_profile,
-            result_timeout=result_timeout,
-        )
-        if accept_cancellations and inspect.iscoroutinefunction(execute_callback)
-        else ActionServer(
-            node,
-            action_type,
-            action_name,
-            execute_callback,
-            callback_group=callback_group,
-            goal_callback=wrapped_goal_callback,
-            goal_service_qos_profile=goal_service_qos_profile,
-            result_service_qos_profile=result_service_qos_profile,
-            cancel_service_qos_profile=cancel_service_qos_profile,
-            feedback_pub_qos_profile=feedback_pub_qos_profile,
-            status_pub_qos_profile=status_pub_qos_profile,
-            result_timeout=result_timeout,
-        )
+    action_server = ActionServer(
+        node,
+        action_type,
+        action_name,
+        execute_callback,
+        callback_group=callback_group,
+        goal_callback=wrapped_goal_callback,
+        goal_service_qos_profile=goal_service_qos_profile,
+        result_service_qos_profile=result_service_qos_profile,
+        cancel_service_qos_profile=cancel_service_qos_profile,
+        feedback_pub_qos_profile=feedback_pub_qos_profile,
+        status_pub_qos_profile=status_pub_qos_profile,
+        result_timeout=result_timeout,
     )
+
+    if accept_cancellations:
+        action_server.register_cancel_callback(_cancel_goal_cancellable)
+        if inspect.iscoroutinefunction(execute_callback):
+            action_server.register_execute_callback(
+                _wrap_execute_cancellable(execute_callback, action_type.Result())
+            )
+            action_server.register_handle_accepted_callback(
+                _handle_accepted_cancellable
+            )
     try:
         yield action_server
     finally:
