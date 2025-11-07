@@ -59,12 +59,6 @@ class AsyncExecutor:
         wait_timeout_sec : float, optional
             Timeout for each wait-set spin iteration in seconds (default: 0.1).
         """
-        if anyio is None:
-            raise ImportError(
-                "anyio is required to use AsyncExecutor. "
-                "Install it with: pip install anyio"
-            )
-
         self._task_group = task_group
         self._portal = blocking_portal
         self._context = get_default_context() if context is None else context
