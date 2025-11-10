@@ -16,9 +16,14 @@ import turtlesim.srv
 
 import rclpy_async
 
+# Zero buffer stream doesn't keep messages.
+# If a receiver awaits a message the stream passes sent message to the receiver.
+# If no receiver is waiting the message the sender is blocked or the message is dropped.
 send_stream, receive_stream = anyio.create_memory_object_stream(0)
 
 
+# Subscription callback sends topic messages to an awaiting receiver,
+# or drops them if no receiver is waiting.
 def send_no_wait_no_raise(msg):
     """Send message without waiting receiver and without raising WouldBlock."""
     try:
@@ -36,28 +41,29 @@ async def main():
         send_no_wait_no_raise,
         qos_profile=0,  # does not queue messages in middleware queue
     )
+    client = node.create_client(
+        turtlesim.srv.TeleportRelative,
+        "/turtle1/teleport_relative",
+    )
     request = turtlesim.srv.TeleportRelative.Request()
     request.linear = 2.0
     request.angular = 1.57
 
-    async with rclpy_async.start_executor() as executor:
-        executor.add_node(node)
-        with rclpy_async.service_client(
-            node,
-            turtlesim.srv.TeleportRelative,
-            "/turtle1/teleport_relative",
-        ) as teleport_relative:
-            before = await receive_stream.receive()
-            print(f"Pose before: {before}")
+    async with rclpy_async.start_executor() as xtor:
+        xtor.add_node(node)
+        if not await rclpy_async.server_ready(client.service_is_ready):
+            print("Service '/turtle1/teleport_relative' not available")
+            return
+        # wait for the next message to arrive
+        before = await receive_stream.receive()
+        print(f"Pose before: {before}")
 
-            print(
-                f"Teleport relative linear={request.linear}, angular={request.angular}"
-            )
-            resp = await teleport_relative(request)
-            print(f"Response: {resp}")
+        print(f"Teleport relative linear={request.linear}, angular={request.angular}")
+        resp = await rclpy_async.future_result(client.call_async(request))
+        print(f"Response: {resp}")
 
-            after = await receive_stream.receive()
-            print(f"Pose after: {after}")
+        after = await receive_stream.receive()
+        print(f"Pose after: {after}")
 
 
 anyio.run(main)

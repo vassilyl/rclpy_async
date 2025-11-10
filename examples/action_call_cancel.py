@@ -8,43 +8,46 @@ Run:
     Requires that `turtlesim` is running, e.g.:
     ros2 run turtlesim turtlesim_node"""
 
-import logging
-
 import anyio
+import rclpy
 from turtlesim.action import RotateAbsolute
 
-from rclpy_async import NodeAsync
+import rclpy_async
 
 action_name = "/turtle1/rotate_absolute"
 
 
 async def main():
-    async with NodeAsync("action_cancel_node") as anode:
+    rclpy.init()
+    node = rclpy.create_node("action_cancel_node")
+    logger = node.get_logger()
+
+    async with rclpy_async.start_executor() as xtor:
+        xtor.add_node(node)
         # First, rotate to 0 radians to have a known starting orientation
-        async with anode.action_client(RotateAbsolute, action_name) as rotate_absolute:
-            logging.info("Sending RotateAbsolute goal to 0.0 radians")
-            await rotate_absolute(RotateAbsolute.Goal(theta=0.0))
-            logging.info("Rotation to 0.0 radians complete")
-
-        # Now rotate to 2 radians, but cancel when remaining angle < 1 radian
-        cancel_scope = anyio.CancelScope()
-
-        async def feedback_task(msg):
-            logging.info(f"Feedback: remaining={msg.feedback.remaining}")
-            if abs(msg.feedback.remaining) < 1.0:
-                logging.info("Feedback: cancelling the goal")
-                cancel_scope.cancel()
-
-        async with anode.action_client(
-            RotateAbsolute, action_name, feedback_task=feedback_task
+        with rclpy_async.action_client(
+            node, RotateAbsolute, action_name
         ) as rotate_absolute:
+            logger.info("Sending RotateAbsolute goal to 0.0 radians")
+            await rotate_absolute(RotateAbsolute.Goal(theta=0.0))
+            logger.info("Rotation to 0.0 radians complete")
+
+            # Now rotate to 2 radians, but cancel when remaining angle < 1 radian
+            cancel_scope = anyio.CancelScope()
+
+            async def feedback_task(msg):
+                logger.info(f"Feedback: remaining={msg.feedback.remaining}")
+                if abs(msg.feedback.remaining) < 1.0:
+                    logger.info("Feedback: cancelling the goal")
+                    cancel_scope.cancel()
+
             with cancel_scope:
-                logging.info("Sending RotateAbsolute goal to 2.0 radians")
-                await rotate_absolute(RotateAbsolute.Goal(theta=2.0))
-                logging.error("This message should never be logged")
-            logging.info("Rotation to 2.0 radians cancelled")
+                logger.info("Sending RotateAbsolute goal to 2.0 radians")
+                await rotate_absolute(
+                    RotateAbsolute.Goal(theta=2.0), feedback_task=feedback_task
+                )
+                logger.error("This message should never be logged")
+            logger.info("Rotation to 2.0 radians cancelled")
 
 
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("rclpy_async").setLevel(logging.WARNING)
 anyio.run(main)

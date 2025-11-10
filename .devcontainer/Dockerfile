@@ -4,5 +4,5 @@ RUN export ROS_APT_SOURCE_VERSION=$(curl -s https://api.github.com/repos/ros-inf
     dpkg -i /tmp/ros2-apt-source.deb && \
     apt update && export DEBIAN_FRONTEND=noninteractive && \
     rm -f /tmp/ros2-apt-source.deb && \
-    apt install -y ros-humble-ros-base ros-humble-turtlesim && \
+    apt install -y ros-humble-ros-base ros-humble-turtlesim ros-humble-example-interfaces && \
     echo source /opt/ros/humble/setup.bash >> /home/vscode/.profile
